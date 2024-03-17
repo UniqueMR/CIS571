@@ -284,7 +284,7 @@ async def testEcall(dut):
 @cocotb.test()
 async def testOneRiscvTest(dut):
     "Use this to run one particular riscv test"
-    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-simple')
+    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32um-p-mulhsu')
 
 async def riscvTest(dut, binaryPath=None):
     "Run the official RISC-V test whose binary lives at `binaryPath`"
@@ -306,7 +306,8 @@ async def riscvTest(dut, binaryPath=None):
     raise SimTimeoutError()
 
 # NB: this test is only for HW3B
-@cocotb.test(skip='RVTEST_ALUBR' in os.environ)
+# @cocotb.test(skip='RVTEST_ALUBR' in os.environ)
+@cocotb.test(skip='RVTEST' in os.environ)
 async def testStoreLoad(dut):
     "Check that a load can read a previously-stored value."
     asm(dut, '''
@@ -319,7 +320,8 @@ async def testStoreLoad(dut):
     await ClockCycles(dut.clock_proc, 4)
     assert dut.datapath.rf.regs[2].value == 0x12345000, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
 
-@cocotb.test(skip='RVTEST_ALUBR' in os.environ)
+# @cocotb.test(skip='RVTEST_ALUBR' in os.environ)
+@cocotb.test(skip='RVTEST' in os.environ)
 async def dhrystone(dut):
     "Run dhrystone benchmark from riscv-tests"
     #if 'RVTEST_ALUBR' in os.environ:

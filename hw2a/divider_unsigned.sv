@@ -11,9 +11,34 @@ module divider_unsigned (
     output wire [31:0] o_quotient
 );
 
-    // TODO: your code here
+    wire [31:0] dividends[0:32];
+    wire [31:0] remainders[0:32];
+    wire [31:0] quotients[0:32];
+
+    assign dividends[0] = i_dividend;
+    assign remainders[0] = 0; 
+    assign quotients[0] = 0;  
+
+    genvar i;
+    generate
+        for (i = 0; i < 32; i = i + 1) begin : divu_chain
+            divu_1iter divu_iter(
+                .i_dividend(dividends[i]),
+                .i_divisor(i_divisor), 
+                .i_remainder(remainders[i]),
+                .i_quotient(quotients[i]),
+                .o_dividend(dividends[i + 1]), 
+                .o_remainder(remainders[i + 1]), 
+                .o_quotient(quotients[i + 1])   
+            );
+        end
+    endgenerate
+
+    assign o_remainder = remainders[32];
+    assign o_quotient = quotients[32];
 
 endmodule
+
 
 
 module divu_1iter (
@@ -39,5 +64,11 @@ module divu_1iter (
     */
 
     // TODO: your code here
+    wire [31:0] tmp_remainder = {i_remainder[30:0], i_dividend[31]};
+    wire sub_or_not = tmp_remainder >= i_divisor;
+
+    assign o_dividend = i_dividend << 1;
+    assign o_remainder = sub_or_not ? tmp_remainder - i_divisor : tmp_remainder;
+    assign o_quotient = {i_quotient[30:0], sub_or_not ? 1'b1 : 1'b0};
 
 endmodule

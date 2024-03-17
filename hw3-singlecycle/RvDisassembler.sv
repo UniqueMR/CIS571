@@ -1,6 +1,7 @@
 `timescale 1ns / 1ns
 
 /** WARNING: this code was largely written by ChatGPT, and has not been thoroughly tested! */
+/* Man, what can I say */
 function automatic string rv_disasm (input bit [31:0] instruction);
 
     string da_str;
