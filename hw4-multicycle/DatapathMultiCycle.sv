@@ -310,7 +310,6 @@ module DatapathMultiCycle (
     .o_quotient(div_quotient)
   );
 
-  logic div_stall;
 
   always_comb begin
     illegal_insn = 1'b0;
@@ -342,9 +341,11 @@ module DatapathMultiCycle (
     div_dividend = 32'b0;
     div_dividor = 32'b0;
 
+    div_stall_next = 1'b0;
+
     halt = 1'b0;
 
-    if(insn_from_imem[6:0] == 7'h33 && insn_funct3[2] == 1'b1)  begin
+    if(insn_from_imem[6:0] == 7'h33 && insn_funct3[2] == 1'b1 && insn_funct7 == 7'h1)  begin
       if(div_stall_curr == 1'b0)  begin
         div_stall_next = 1'b1;
         pcNext = pcCurrent;
@@ -530,7 +531,13 @@ module DatapathMultiCycle (
 
         // div
         else if(insn_funct3 == 3'b100 && insn_funct7 == 7'd1) begin
-          regfile_we = 1'b1;
+          if(div_stall_curr == 1'b1)  begin
+            regfile_we = 1'b1;
+          end
+          else  begin
+            regfile_we = 1'b0;
+          end
+
           pos_neg = regfile_rs1_data[31] ^ regfile_rs2_data[31];
 
           div_dividend = regfile_rs1_data[31] ? (~regfile_rs1_data + 1) : regfile_rs1_data;
@@ -549,7 +556,13 @@ module DatapathMultiCycle (
         else if(insn_funct3 == 3'b101 && insn_funct7 == 7'd1) begin
             div_dividend = regfile_rs1_data;
             div_dividor = regfile_rs2_data;
-            regfile_we = 1'b1;
+
+            if(div_stall_curr == 1'b1)  begin
+              regfile_we = 1'b1;
+            end
+            else  begin
+              regfile_we = 1'b0;
+            end
 
             if(regfile_rs2_data == 32'd0) begin
               regfile_rd_data = 32'hFFFFFFFF; 
@@ -562,7 +575,13 @@ module DatapathMultiCycle (
 
         // rem
         else if(insn_funct3 == 3'b110 && insn_funct7 == 7'd1) begin
-          regfile_we = 1'b1;
+          if(div_stall_curr == 1'b1)  begin
+            regfile_we = 1'b1;
+          end
+          else  begin
+            regfile_we = 1'b0;
+          end
+
           div_dividend = regfile_rs1_data[31] ? (~regfile_rs1_data + 1) : regfile_rs1_data;
           div_dividor = regfile_rs2_data[31] ? (~regfile_rs2_data + 1) : regfile_rs2_data;
 
@@ -576,7 +595,12 @@ module DatapathMultiCycle (
 
         // remu 
         else if(insn_funct3 == 3'b111 && insn_funct7 == 7'd1) begin
-          regfile_we = 1'b1;
+          if(div_stall_curr == 1'b1)  begin
+            regfile_we = 1'b1;
+          end
+          else  begin
+            regfile_we = 1'b0;
+          end
 
           div_dividend = regfile_rs1_data;
           div_dividor = regfile_rs2_data;

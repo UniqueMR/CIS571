@@ -309,10 +309,10 @@ RV_TEST_BINARIES = [
     
     RISCV_TESTS_PATH / 'rv32ui-p-and', # 3
     RISCV_TESTS_PATH / 'rv32ui-p-or',
-    RISCV_TESTS_PATH / 'rv32ui-p-xor',
+    RISCV_TESTS_PATH / 'rv32ui-p-xor', # 5
     RISCV_TESTS_PATH / 'rv32ui-p-sll',
-    RISCV_TESTS_PATH / 'rv32ui-p-sra',
-    RISCV_TESTS_PATH / 'rv32ui-p-srl',
+    RISCV_TESTS_PATH / 'rv32ui-p-sra', # 7
+    RISCV_TESTS_PATH / 'rv32ui-p-srl', # 8
     RISCV_TESTS_PATH / 'rv32ui-p-slt',
     RISCV_TESTS_PATH / 'rv32ui-p-add',
     RISCV_TESTS_PATH / 'rv32ui-p-sub',
