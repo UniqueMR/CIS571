@@ -52,10 +52,31 @@ module RegFile (
     input logic rst
 );
   localparam int NumRegs = 32;
-  genvar i;
+  // genvar i;
   logic [`REG_SIZE] regs[NumRegs];
 
   // TODO: your code here
+  // wire up the output port with the corresponding register
+  assign regs[0] = 32'd0;
+  assign rs1_data = regs[rs1];
+  assign rs2_data = regs[rs2];
+
+  // flip-flops
+  always_ff @(posedge clk)  begin
+    // in reset condition, set all regs to 0
+    if(rst)  begin
+      for(int i = 1; i < 32; i++) begin
+        regs[i] <= 32'd0;
+      end
+    end
+
+    // in write enable mode, write the corresponding reg with data
+    else if(we)  begin
+      if(rd != 5'b0)  begin
+        regs[rd] <= rd_data;
+      end
+    end
+  end
 
 endmodule
 
@@ -118,20 +139,40 @@ module DatapathPipelined (
     output cycle_status_e trace_writeback_cycle_status
 );
 
-  // opcodes - see section 19 of RiscV spec
-  localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
-  localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
-  localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
+  // // opcodes - see section 19 of RiscV spec
+  // localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
 
-  localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
-  localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
-  localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
 
-  localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
   localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;
+
+  // Instantiate RegFile and its corresponding signals
+  wire [4:0] regfile_rd;
+  wire [`REG_SIZE] regfile_rd_data;
+  wire [4:0] regfile_rs1, regfile_rs2;
+  wire [`REG_SIZE] regfile_rs1_data, regfile_rs2_data;
+  wire regfile_we; // Write enable for the RegFile
+
+  // Instantiate the RegFile module and name it 'rf' as expected by the testbench
+  RegFile rf (
+    .rd(regfile_rd),
+    .rd_data(regfile_rd_data),
+    .rs1(regfile_rs1),
+    .rs1_data(regfile_rs1_data),
+    .rs2(regfile_rs2),
+    .rs2_data(regfile_rs2_data),
+    .clk(clk),
+    .we(regfile_we),
+    .rst(rst)
+  );
 
   // cycle counter, not really part of any stage but useful for orienting within GtkWave
   // do not rename this as the testbench uses this value
@@ -143,6 +184,18 @@ module DatapathPipelined (
       cycles_current <= cycles_current + 1;
     end
   end
+
+  wire [`REG_SIZE] cla_a;
+  wire [`REG_SIZE] cla_b;
+  wire cla_cin;
+  wire [`REG_SIZE] cla_sum;
+
+  cla _cla(
+    .a(cla_a),
+    .b(cla_b),
+    .cin(cla_cin),
+    .sum(cla_sum)
+  );
 
   /***************/
   /* FETCH STAGE */
@@ -208,6 +261,183 @@ module DatapathPipelined (
       .disasm(d_disasm)
   );
 
+  // components of the instruction
+  wire [6:0] insn_funct7;
+  wire [4:0] insn_rs1;
+  wire [4:0] insn_rs2;
+  wire [31:0] data_rs1;
+  wire [31:0] data_rs2;
+  wire [2:0] insn_funct3;
+  wire [4:0] insn_rd;
+  wire [`OPCODE_SIZE] insn_opcode;
+
+  assign {insn_funct7, insn_rs2, insn_rs1, insn_funct3, insn_rd, insn_opcode} = decode_state.insn;
+  assign regfile_rs1 = insn_rs1;
+  assign regfile_rs2 = insn_rs2;
+
+  /****************/
+  /* EXECUTE STAGE */
+  /****************/
+
+  typedef struct packed {
+    logic [`REG_SIZE] pc;
+    logic [`INSN_SIZE] insn;
+    logic [6:0] insn_opcode;
+    logic [4:0] insn_rd;
+    logic [2:0] insn_funct3;
+    logic [31:0] data_rs1;
+    logic [31:0] data_rs2;
+    logic [6:0] insn_funct7;
+    cycle_status_e cycle_status;
+  } stage_execute_t;
+
+  stage_execute_t execute_state;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      execute_state <= '{
+        pc: 0,
+        insn: 0,
+        insn_opcode: 0,
+        insn_rd: 0,
+        insn_funct3: 0,
+        data_rs1: 0,
+        data_rs2: 0,
+        insn_funct7: 0,
+        cycle_status: CYCLE_RESET
+      };
+    end else begin
+      begin
+        execute_state <= '{
+          pc: decode_state.pc,
+          insn: decode_state.insn,
+          insn_opcode: insn_opcode,
+          insn_rd: insn_rd,
+          insn_funct3: insn_funct3,
+          data_rs1: regfile_rs1_data,
+          data_rs2: regfile_rs2_data,
+          insn_funct7: insn_funct7,
+          cycle_status: decode_state.cycle_status
+        };
+      end
+    end
+  end
+
+  logic [31:0] res_alu;
+
+  always_comb begin
+    case (execute_state.insn_opcode)
+      OpcodeLui: begin
+        res_alu = {execute_state.insn[31:12], 12'b0};                
+      end
+      default:  begin
+      end
+    endcase
+  end
+
+  wire [255:0] x_disasm;
+  Disasm #(
+      .PREFIX("X")
+  ) disasm_2execute (
+      .insn  (execute_state.insn),
+      .disasm(x_disasm)
+  );
+
+  /****************/
+  /* MEMORY STAGE */
+  /****************/
+
+  typedef struct packed {
+    logic [`REG_SIZE] pc;
+    logic [`INSN_SIZE] insn;
+    logic [6:0] insn_opcode;
+    logic [4:0] insn_rd;
+    logic [31:0] data_rd;
+    cycle_status_e cycle_status;
+  } stage_memory_t;
+  
+  stage_memory_t memory_state;
+
+  always_ff @(posedge clk)  begin
+    if(rst) begin
+      memory_state <= '{
+        pc: 0,
+        insn: 0,
+        insn_opcode: 0,
+        insn_rd: 0,
+        data_rd: 0,
+        cycle_status: CYCLE_RESET
+      };
+    end
+    else  begin
+      memory_state <= '{
+        pc: execute_state.pc,
+        insn: execute_state.insn,
+        insn_opcode: execute_state.insn_opcode,
+        insn_rd: execute_state.insn_rd,
+        data_rd: res_alu,
+        cycle_status: execute_state.cycle_status
+      };
+    end
+  end
+
+  wire [255:0] m_disasm;
+  Disasm #(
+      .PREFIX("M")
+  ) disasm_3memory (
+      .insn  (memory_state.insn),
+      .disasm(m_disasm)
+  );
+
+  /********************/
+  /* WRITE_BACK STAGE */
+  /********************/
+
+  typedef struct packed {
+  logic [`REG_SIZE] pc;
+  logic [`INSN_SIZE] insn;
+  logic [6:0] insn_opcode;
+  logic [4:0] insn_rd;
+  logic [31:0] data_rd;
+  cycle_status_e cycle_status;
+  } stage_writeback_t;
+
+  stage_writeback_t writeback_state;
+
+  always_ff @(posedge clk)  begin
+    if(rst) begin
+      writeback_state <= '{
+        pc: 0,
+        insn: 0,
+        insn_opcode: 0,
+        insn_rd: 0,
+        data_rd: 0,
+        cycle_status: CYCLE_RESET
+      };
+    end
+    else  begin
+      writeback_state <= '{
+        pc: memory_state.pc,
+        insn: memory_state.insn,
+        insn_opcode: memory_state.insn_opcode,
+        insn_rd: memory_state.insn_rd,
+        data_rd: memory_state.data_rd,
+        cycle_status: memory_state.cycle_status
+      };
+    end
+  end
+
+  assign regfile_we = (writeback_state.insn_opcode == 7'h63) ? 1'b0 : 1'b1;
+  assign regfile_rd = writeback_state.insn_rd;
+  assign regfile_rd_data = writeback_state.data_rd;
+
+  wire [255:0] w_disasm;
+  Disasm #(
+      .PREFIX("W")
+  ) disasm_4writeback (
+      .insn  (writeback_state.insn),
+      .disasm(w_disasm)
+  );
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
 
