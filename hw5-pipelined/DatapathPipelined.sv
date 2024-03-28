@@ -337,6 +337,33 @@ module DatapathPipelined (
 
   logic illegal_insn;
 
+  logic [31:0] alu_data_rs1;
+  logic [31:0] alu_data_rs2;
+
+  always_comb begin
+    if(mx_bypass_rs1) begin
+      alu_data_rs1 = memory_state.data_rd;
+    end
+    else if(wx_bypass_rs1)  begin
+      alu_data_rs1 = writeback_state.data_rd;
+    end
+    else  begin
+      alu_data_rs1 = execute_state.data_rs1;
+    end
+  end
+
+  always_comb begin
+    if(mx_bypass_rs2) begin
+      alu_data_rs2 = memory_state.data_rd;
+    end
+    else if(wx_bypass_rs2)  begin
+      alu_data_rs2 = writeback_state.data_rd;
+    end
+    else  begin
+      alu_data_rs2 = execute_state.data_rs2;
+    end
+  end
+
   always_comb begin
     illegal_insn = 1'b0;
     case (execute_state.insn_opcode)
@@ -348,7 +375,7 @@ module DatapathPipelined (
         case  (execute_state.insn_funct3)
           // addi
           3'b000: begin
-            cla_a = (mx_bypass_rs1) ? memory_state.data_rd : execute_state.data_rs1;
+            cla_a = alu_data_rs1;
             cla_b = reg_imm32;
             cla_cin = 1'b0;
             res_alu = cla_sum;
@@ -364,8 +391,8 @@ module DatapathPipelined (
           3'b000: begin
             // add 
             if(execute_state.insn_funct7 == 7'h0) begin
-              cla_a = (mx_bypass_rs1) ? memory_state.data_rd : execute_state.data_rs1;
-              cla_b = (mx_bypass_rs2) ? memory_state.data_rd : execute_state.data_rs2;
+              cla_a = alu_data_rs1;
+              cla_b = alu_data_rs2;
               cla_cin = 1'b0;
               res_alu = cla_sum;
             end
@@ -506,8 +533,12 @@ module DatapathPipelined (
   /*****************/
   wire mx_bypass_rs1;
   wire mx_bypass_rs2;
+  wire wx_bypass_rs1;
+  wire wx_bypass_rs2;
   assign mx_bypass_rs1 = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
   assign mx_bypass_rs2 = (execute_state.insn_rs2 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
+  assign wx_bypass_rs1 = (execute_state.insn_rs1 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0);
+  assign wx_bypass_rs2 = (execute_state.insn_rs2 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0);
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
