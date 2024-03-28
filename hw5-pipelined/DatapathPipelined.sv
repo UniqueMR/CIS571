@@ -308,8 +308,8 @@ module DatapathPipelined (
           insn_funct3: insn_funct3,
           insn_rs1: insn_rs1,
           insn_rs2: insn_rs2,
-          data_rs1: regfile_rs1_data,
-          data_rs2: regfile_rs2_data,
+          data_rs1: (wd_bypass_rs1) ? writeback_state.data_rd : regfile_rs1_data,
+          data_rs2: (wd_bypass_rs2) ? writeback_state.data_rd : regfile_rs2_data,
           insn_funct7: insn_funct7,
           cycle_status: decode_state.cycle_status
         };
@@ -535,10 +535,14 @@ module DatapathPipelined (
   wire mx_bypass_rs2;
   wire wx_bypass_rs1;
   wire wx_bypass_rs2;
+  wire wd_bypass_rs1;
+  wire wd_bypass_rs2;
   assign mx_bypass_rs1 = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
   assign mx_bypass_rs2 = (execute_state.insn_rs2 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
   assign wx_bypass_rs1 = (execute_state.insn_rs1 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0);
   assign wx_bypass_rs2 = (execute_state.insn_rs2 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0);
+  assign wd_bypass_rs1 = (insn_rs1 == writeback_state.insn_rd);
+  assign wd_bypass_rs2 = (insn_rs2 == writeback_state.insn_rd);
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
