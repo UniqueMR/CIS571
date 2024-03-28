@@ -348,7 +348,7 @@ module DatapathPipelined (
         case  (execute_state.insn_funct3)
           // addi
           3'b000: begin
-            cla_a = (mx_bypass) ? memory_state.data_rd : execute_state.data_rs1;
+            cla_a = (mx_bypass_rs1) ? memory_state.data_rd : execute_state.data_rs1;
             cla_b = reg_imm32;
             cla_cin = 1'b0;
             res_alu = cla_sum;
@@ -364,8 +364,8 @@ module DatapathPipelined (
           3'b000: begin
             // add 
             if(execute_state.insn_funct7 == 7'h0) begin
-              cla_a = (mx_bypass) ? memory_state.data_rd : execute_state.data_rs1;
-              cla_b = execute_state.data_rs2;
+              cla_a = (mx_bypass_rs1) ? memory_state.data_rd : execute_state.data_rs1;
+              cla_b = (mx_bypass_rs2) ? memory_state.data_rd : execute_state.data_rs2;
               cla_cin = 1'b0;
               res_alu = cla_sum;
             end
@@ -504,8 +504,10 @@ module DatapathPipelined (
   /*****************/
   /* BYPASS HANDLE */
   /*****************/
-  wire mx_bypass;
-  assign mx_bypass = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
+  wire mx_bypass_rs1;
+  wire mx_bypass_rs2;
+  assign mx_bypass_rs1 = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
+  assign mx_bypass_rs2 = (execute_state.insn_rs2 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
