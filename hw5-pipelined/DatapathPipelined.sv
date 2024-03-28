@@ -147,8 +147,8 @@ module DatapathPipelined (
   // localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
   // localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
 
-  // localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
+  localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
+  localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
   // localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
 
   // localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
@@ -184,18 +184,6 @@ module DatapathPipelined (
       cycles_current <= cycles_current + 1;
     end
   end
-
-  wire [`REG_SIZE] cla_a;
-  wire [`REG_SIZE] cla_b;
-  wire cla_cin;
-  wire [`REG_SIZE] cla_sum;
-
-  cla _cla(
-    .a(cla_a),
-    .b(cla_b),
-    .cin(cla_cin),
-    .sum(cla_sum)
-  );
 
   /***************/
   /* FETCH STAGE */
@@ -285,6 +273,8 @@ module DatapathPipelined (
     logic [6:0] insn_opcode;
     logic [4:0] insn_rd;
     logic [2:0] insn_funct3;
+    logic [4:0] insn_rs1;
+    logic [4:0] insn_rs2;
     logic [31:0] data_rs1;
     logic [31:0] data_rs2;
     logic [6:0] insn_funct7;
@@ -301,6 +291,8 @@ module DatapathPipelined (
         insn_opcode: 0,
         insn_rd: 0,
         insn_funct3: 0,
+        insn_rs1: 0,
+        insn_rs2: 0,
         data_rs1: 0,
         data_rs2: 0,
         insn_funct7: 0,
@@ -314,6 +306,8 @@ module DatapathPipelined (
           insn_opcode: insn_opcode,
           insn_rd: insn_rd,
           insn_funct3: insn_funct3,
+          insn_rs1: insn_rs1,
+          insn_rs2: insn_rs2,
           data_rs1: regfile_rs1_data,
           data_rs2: regfile_rs2_data,
           insn_funct7: insn_funct7,
@@ -323,14 +317,76 @@ module DatapathPipelined (
     end
   end
 
+  logic [`REG_SIZE] cla_a;
+  logic [`REG_SIZE] cla_b;
+  logic cla_cin;
+  logic [`REG_SIZE] cla_sum;
+
+  cla _cla(
+    .a(cla_a),
+    .b(cla_b),
+    .cin(cla_cin),
+    .sum(cla_sum)
+  );
+
   logic [31:0] res_alu;
+  wire [11:0] reg_imm12;
+  wire [31:0] reg_imm32;
+  assign reg_imm12 = execute_state.insn[31:20];
+  assign reg_imm32 = {{20{reg_imm12[11]}}, reg_imm12};
+
+  logic illegal_insn;
 
   always_comb begin
+    illegal_insn = 1'b0;
     case (execute_state.insn_opcode)
       OpcodeLui: begin
         res_alu = {execute_state.insn[31:12], 12'b0};                
       end
+
+      OpcodeRegImm: begin
+        case  (execute_state.insn_funct3)
+          // addi
+          3'b000: begin
+            cla_a = (mx_bypass) ? memory_state.data_rd : execute_state.data_rs1;
+            cla_b = reg_imm32;
+            cla_cin = 1'b0;
+            res_alu = cla_sum;
+          end
+          default:  begin
+            illegal_insn = 1'b1;
+          end
+        endcase
+      end
+
+      OpcodeRegReg: begin
+        case (execute_state.insn_funct3)
+          3'b000: begin
+            // add 
+            if(execute_state.insn_funct7 == 7'h0) begin
+              cla_a = (mx_bypass) ? memory_state.data_rd : execute_state.data_rs1;
+              cla_b = execute_state.data_rs2;
+              cla_cin = 1'b0;
+              res_alu = cla_sum;
+            end
+            else if(execute_state.insn_funct7 == 7'h20) begin
+            end
+            else  begin
+              illegal_insn = 1'b1;
+            end
+          end
+          default:  begin
+            illegal_insn = 1'b1;
+          end
+        endcase
+      end
+
       default:  begin
+        res_alu = 32'd0;
+        cla_a = 32'd0;
+        cla_b = 32'd0;
+        cla_cin = 1'b0;
+        illegal_insn = 1'b1;
       end
     endcase
   end
@@ -353,6 +409,7 @@ module DatapathPipelined (
     logic [6:0] insn_opcode;
     logic [4:0] insn_rd;
     logic [31:0] data_rd;
+    logic illegal_insn;
     cycle_status_e cycle_status;
   } stage_memory_t;
   
@@ -366,6 +423,7 @@ module DatapathPipelined (
         insn_opcode: 0,
         insn_rd: 0,
         data_rd: 0,
+        illegal_insn: 0,
         cycle_status: CYCLE_RESET
       };
     end
@@ -376,6 +434,7 @@ module DatapathPipelined (
         insn_opcode: execute_state.insn_opcode,
         insn_rd: execute_state.insn_rd,
         data_rd: res_alu,
+        illegal_insn: illegal_insn,
         cycle_status: execute_state.cycle_status
       };
     end
@@ -399,6 +458,7 @@ module DatapathPipelined (
   logic [6:0] insn_opcode;
   logic [4:0] insn_rd;
   logic [31:0] data_rd;
+  logic illegal_insn;
   cycle_status_e cycle_status;
   } stage_writeback_t;
 
@@ -412,6 +472,7 @@ module DatapathPipelined (
         insn_opcode: 0,
         insn_rd: 0,
         data_rd: 0,
+        illegal_insn: 0,
         cycle_status: CYCLE_RESET
       };
     end
@@ -422,6 +483,7 @@ module DatapathPipelined (
         insn_opcode: memory_state.insn_opcode,
         insn_rd: memory_state.insn_rd,
         data_rd: memory_state.data_rd,
+        illegal_insn: memory_state.illegal_insn,
         cycle_status: memory_state.cycle_status
       };
     end
@@ -438,6 +500,13 @@ module DatapathPipelined (
       .insn  (writeback_state.insn),
       .disasm(w_disasm)
   );
+
+  /*****************/
+  /* BYPASS HANDLE */
+  /*****************/
+  wire mx_bypass;
+  assign mx_bypass = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0);
+
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
 
