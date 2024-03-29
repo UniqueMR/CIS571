@@ -392,6 +392,32 @@ module DatapathPipelined (
             cla_cin = 1'b0;
             res_alu = cla_sum;
           end
+
+          3'b001: begin
+            // slli
+            if(execute_state.insn_funct7 == 7'h0) begin
+              res_alu = alu_data_rs1 << reg_imm12[4:0];
+            end
+            else begin
+            end
+          end
+
+          3'b101: begin
+            //srai
+            if(execute_state.insn_funct7 == 7'h20)  begin
+              res_alu = $signed(alu_data_rs1) >>> reg_imm12[4:0];
+            end
+            else if(execute_state.insn_funct7 == 7'h0)  begin
+            end
+            else  begin
+            end
+          end
+
+          // ori
+          3'b110: begin
+            res_alu = alu_data_rs1 | reg_imm32;
+          end 
+
           default:  begin
             illegal_insn = 1'b1;
           end
@@ -426,7 +452,7 @@ module DatapathPipelined (
           3'b000: begin
             if(alu_data_rs1 == alu_data_rs2)  begin
               flush = 1'b1;
-              cla_a = f_pc_current;
+              cla_a = execute_state.pc;
               cla_b = branch_imm;
               jump_to_pc = cla_sum;
             end else  begin
@@ -436,7 +462,7 @@ module DatapathPipelined (
           3'b001: begin
             if(alu_data_rs1 != alu_data_rs2)  begin
               flush = 1'b1;
-              cla_a = f_pc_current;
+              cla_a = execute_state.pc;
               cla_b = branch_imm;
               jump_to_pc = cla_sum;
             end else  begin
