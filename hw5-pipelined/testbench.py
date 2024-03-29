@@ -355,6 +355,11 @@ async def testTraceRvBeq(dut):
     "Use the BEQ riscv-test with trace comparison"
     await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-beq', TRACING_MODE)
 
+@cocotb.test()
+async def testOneRiscvTest(dut):
+    "Use this to run one particular riscv test"
+    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-simple')
+
 
 #########################
 ## FULL ISA TEST CASES ##

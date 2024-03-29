@@ -149,7 +149,7 @@ module DatapathPipelined (
 
   localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
   localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
+  localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
 
   // localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
   localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;
@@ -571,6 +571,22 @@ module DatapathPipelined (
   assign regfile_we = (writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 1'b0 : 1'b1;
   assign regfile_rd = writeback_state.insn_rd;
   assign regfile_rd_data = writeback_state.data_rd;
+
+  always_comb begin
+    case(writeback_state.insn_opcode)  
+      OpcodeEnviron:  begin
+        if(writeback_state.insn[31:7] == 25'd0) begin
+          halt = 1'b1;
+        end
+        else  begin
+          halt = 1'b0;
+        end
+      end
+      default:  begin
+        halt = 1'b0;
+      end
+    endcase
+  end
 
   wire [255:0] w_disasm;
   Disasm #(
