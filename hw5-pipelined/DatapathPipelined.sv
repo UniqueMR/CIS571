@@ -142,7 +142,7 @@ module DatapathPipelined (
   // // opcodes - see section 19 of RiscV spec
   // localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
   // localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
+  localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
   // localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
   // localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
   // localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
@@ -193,15 +193,19 @@ module DatapathPipelined (
   wire [`REG_SIZE] f_insn;
   cycle_status_e f_cycle_status;
 
+  always_comb begin
+    f_cycle_status = flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
+  end
+
   // program counter
   always_ff @(posedge clk) begin
     if (rst) begin
       f_pc_current <= 32'd0;
       // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
-      f_cycle_status <= CYCLE_NO_STALL;
+      // f_cycle_status <= CYCLE_NO_STALL;
     end else begin
-      f_cycle_status <= CYCLE_NO_STALL;
-      f_pc_current <= f_pc_current + 4;
+      // f_cycle_status <= flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
+      f_pc_current <= jump_to_pc;
     end
   end
   // send PC to imem
@@ -311,7 +315,7 @@ module DatapathPipelined (
           data_rs1: (wd_bypass_rs1) ? writeback_state.data_rd : regfile_rs1_data,
           data_rs2: (wd_bypass_rs2) ? writeback_state.data_rd : regfile_rs2_data,
           insn_funct7: insn_funct7,
-          cycle_status: decode_state.cycle_status
+          cycle_status: flush ? CYCLE_TAKEN_BRANCH : decode_state.cycle_status
         };
       end
     end
@@ -332,13 +336,19 @@ module DatapathPipelined (
   logic [31:0] res_alu;
   wire [11:0] reg_imm12;
   wire [31:0] reg_imm32;
+  wire [31:0] branch_imm;
   assign reg_imm12 = execute_state.insn[31:20];
   assign reg_imm32 = {{20{reg_imm12[11]}}, reg_imm12};
+  assign branch_imm = {{20{execute_state.insn[31]}}, execute_state.insn[7], execute_state.insn[30:25], execute_state.insn[11:8], 1'b0};
 
   logic illegal_insn;
 
   logic [31:0] alu_data_rs1;
   logic [31:0] alu_data_rs2;
+
+  // handle flush caused by branch insns
+  logic flush;
+  logic [`REG_SIZE] jump_to_pc;
 
   always_comb begin
     if(mx_bypass_rs1) begin
@@ -366,6 +376,8 @@ module DatapathPipelined (
 
   always_comb begin
     illegal_insn = 1'b0;
+    flush = 1'b0;
+    jump_to_pc = f_pc_current + 4;
     case (execute_state.insn_opcode)
       OpcodeLui: begin
         res_alu = {execute_state.insn[31:12], 12'b0};                
@@ -401,6 +413,46 @@ module DatapathPipelined (
             else  begin
               illegal_insn = 1'b1;
             end
+          end
+          default:  begin
+            illegal_insn = 1'b1;
+          end
+        endcase
+      end
+
+      OpcodeBranch: begin
+        case(execute_state.insn_funct3)
+          // beq
+          3'b000: begin
+            if(alu_data_rs1 == alu_data_rs2)  begin
+              flush = 1'b1;
+              cla_a = f_pc_current;
+              cla_b = branch_imm;
+              jump_to_pc = cla_sum;
+            end else  begin
+            end
+          end
+          // bne
+          3'b001: begin
+            if(alu_data_rs1 != alu_data_rs2)  begin
+              flush = 1'b1;
+              cla_a = f_pc_current;
+              cla_b = branch_imm;
+              jump_to_pc = cla_sum;
+            end else  begin
+            end
+          end
+          // blt
+          3'b100: begin
+          end
+          // bge
+          3'b101: begin
+          end
+          // bltu
+          3'b110: begin
+          end
+          // bgeu
+          3'b111: begin
           end
           default:  begin
             illegal_insn = 1'b1;
@@ -516,7 +568,7 @@ module DatapathPipelined (
     end
   end
 
-  assign regfile_we = (writeback_state.insn_opcode == 7'h63) ? 1'b0 : 1'b1;
+  assign regfile_we = (writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 1'b0 : 1'b1;
   assign regfile_rd = writeback_state.insn_rd;
   assign regfile_rd_data = writeback_state.data_rd;
 
