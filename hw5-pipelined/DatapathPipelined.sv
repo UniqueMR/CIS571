@@ -140,18 +140,18 @@ module DatapathPipelined (
 );
 
   // // opcodes - see section 19 of RiscV spec
-  // localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
+  localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
+  localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
   localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
+  localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
   // localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
+  localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
 
   localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
   localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
   localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
 
-  // localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
+  localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
   localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;
 
   // Instantiate RegFile and its corresponding signals
@@ -631,12 +631,24 @@ module DatapathPipelined (
   wire wx_bypass_rs2;
   wire wd_bypass_rs1;
   wire wd_bypass_rs2;
-  assign mx_bypass_rs1 = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0 && memory_state.insn_rd != 5'd0);
-  assign mx_bypass_rs2 = (execute_state.insn_rs2 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0 && memory_state.insn_rd != 5'd0);
-  assign wx_bypass_rs1 = (execute_state.insn_rs1 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0 && writeback_state.insn_rd != 5'd0);
-  assign wx_bypass_rs2 = (execute_state.insn_rs2 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0 && writeback_state.insn_rd != 5'd0);
-  assign wd_bypass_rs1 = (insn_rs1 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0);
-  assign wd_bypass_rs2 = (insn_rs2 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0);
+  wire m_rd_make_sense;
+  wire w_rd_make_sense;
+  wire x_rs1_make_sense;
+  wire x_rs2_make_sense;
+  wire d_rs1_make_sense;
+  wire d_rs2_make_sense;
+  assign m_rd_make_sense = memory_state.insn_opcode == OpcodeLui || memory_state.insn_opcode == OpcodeAuipc || memory_state.insn_opcode == OpcodeRegImm || memory_state.insn_opcode == OpcodeRegReg || memory_state.insn_opcode == OpcodeLoad || memory_state.insn_opcode == OpcodeJal || memory_state.insn_opcode == OpcodeJalr;
+  assign w_rd_make_sense = writeback_state.insn_opcode == OpcodeLui || writeback_state.insn_opcode == OpcodeAuipc || writeback_state.insn_opcode == OpcodeRegImm || writeback_state.insn_opcode == OpcodeRegReg || writeback_state.insn_opcode == OpcodeLoad || writeback_state.insn_opcode == OpcodeJal || writeback_state.insn_opcode == OpcodeJalr;
+  assign x_rs1_make_sense = execute_state.insn_opcode == OpcodeRegImm || execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch || execute_state.insn_opcode == OpcodeLoad || execute_state.insn_opcode == OpcodeStore || execute_state.insn_opcode == OpcodeJalr;
+  assign x_rs2_make_sense = execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeStore || execute_state.insn_opcode == OpcodeBranch;
+  assign d_rs1_make_sense = insn_opcode == OpcodeRegImm || insn_opcode == OpcodeRegReg || insn_opcode == OpcodeBranch || insn_opcode == OpcodeLoad || insn_opcode == OpcodeStore || insn_opcode == OpcodeJalr;
+  assign d_rs2_make_sense = insn_opcode == OpcodeRegReg || insn_opcode == OpcodeStore || insn_opcode == OpcodeBranch;
+  assign mx_bypass_rs1 = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0 && memory_state.insn_rd != 5'd0 && m_rd_make_sense && x_rs1_make_sense);
+  assign mx_bypass_rs2 = (execute_state.insn_rs2 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0 && memory_state.insn_rd != 5'd0 && m_rd_make_sense && x_rs2_make_sense);
+  assign wx_bypass_rs1 = (execute_state.insn_rs1 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0 && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && x_rs1_make_sense);
+  assign wx_bypass_rs2 = (execute_state.insn_rs2 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0 && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && x_rs2_make_sense);
+  assign wd_bypass_rs1 = (insn_rs1 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && d_rs1_make_sense);
+  assign wd_bypass_rs2 = (insn_rs2 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && d_rs2_make_sense);
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
