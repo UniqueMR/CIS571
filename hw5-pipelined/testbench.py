@@ -358,7 +358,7 @@ async def testTraceRvBeq(dut):
 @cocotb.test()
 async def testOneRiscvTest(dut):
     "Use this to run one particular riscv test"
-    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-beq')
+    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-srl')
 
 
 #########################

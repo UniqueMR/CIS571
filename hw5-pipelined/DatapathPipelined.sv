@@ -514,7 +514,7 @@ module DatapathPipelined (
               res_alu = alu_data_rs1 >>> alu_data_rs2[4:0];
             end
             //sra
-            if(execute_state.insn_funct7 == 7'h20) begin
+            else if(execute_state.insn_funct7 == 7'h20) begin
               res_alu = $signed(alu_data_rs1) >>> alu_data_rs2[4:0];
             end
             else  begin
