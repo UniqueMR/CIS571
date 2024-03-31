@@ -194,7 +194,12 @@ module DatapathPipelined (
   cycle_status_e f_cycle_status;
 
   always_comb begin
-    f_cycle_status = flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
+    if(rst) begin
+      f_cycle_status = CYCLE_RESET;
+    end
+    else  begin
+      f_cycle_status = flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
+    end
   end
 
   // program counter
@@ -238,7 +243,7 @@ module DatapathPipelined (
     end else begin
       begin
         decode_state <= '{
-          pc: f_pc_current,
+          pc: flush ? 32'h0 : f_pc_current,
           insn: f_insn,
           cycle_status: f_cycle_status
         };
@@ -305,7 +310,7 @@ module DatapathPipelined (
     end else begin
       begin
         execute_state <= '{
-          pc: decode_state.pc,
+          pc: flush ? 32'h0 : decode_state.pc,
           insn: flush ? 32'h0 : decode_state.insn,
           insn_opcode: flush ? 7'h0 : insn_opcode,
           insn_rd: flush ? 5'h0 : insn_rd,
@@ -779,6 +784,10 @@ module DatapathPipelined (
   assign wx_bypass_rs2 = (execute_state.insn_rs2 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0 && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && x_rs2_make_sense);
   assign wd_bypass_rs1 = (insn_rs1 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && d_rs1_make_sense);
   assign wd_bypass_rs2 = (insn_rs2 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && d_rs2_make_sense);
+
+  assign trace_writeback_pc = writeback_state.pc;
+  assign trace_writeback_insn = writeback_state.insn;
+  assign trace_writeback_cycle_status = writeback_state.cycle_status;
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
