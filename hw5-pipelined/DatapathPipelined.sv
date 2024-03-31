@@ -210,7 +210,7 @@ module DatapathPipelined (
   end
   // send PC to imem
   assign pc_to_imem = f_pc_current;
-  assign f_insn = insn_from_imem;
+  assign f_insn = flush ? 32'h0 : insn_from_imem;
 
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
@@ -306,15 +306,15 @@ module DatapathPipelined (
       begin
         execute_state <= '{
           pc: decode_state.pc,
-          insn: decode_state.insn,
-          insn_opcode: insn_opcode,
-          insn_rd: insn_rd,
-          insn_funct3: insn_funct3,
-          insn_rs1: insn_rs1,
-          insn_rs2: insn_rs2,
+          insn: flush ? 32'h0 : decode_state.insn,
+          insn_opcode: flush ? 7'h0 : insn_opcode,
+          insn_rd: flush ? 5'h0 : insn_rd,
+          insn_funct3: flush ? 3'h0 : insn_funct3,
+          insn_rs1: flush ? 5'h0 : insn_rs1,
+          insn_rs2: flush ? 5'h0 : insn_rs2,
           data_rs1: (wd_bypass_rs1) ? writeback_state.data_rd : regfile_rs1_data,
           data_rs2: (wd_bypass_rs2) ? writeback_state.data_rd : regfile_rs2_data,
-          insn_funct7: insn_funct7,
+          insn_funct7: flush ? 7'h0 : insn_funct7,
           cycle_status: flush ? CYCLE_TAKEN_BRANCH : decode_state.cycle_status
         };
       end
@@ -378,6 +378,10 @@ module DatapathPipelined (
     illegal_insn = 1'b0;
     flush = 1'b0;
     jump_to_pc = f_pc_current + 4;
+    res_alu = 32'h0;
+    cla_a = 32'h0;
+    cla_b = 32'h0;
+    cla_cin = 1'b0;
     case (execute_state.insn_opcode)
       OpcodeLui: begin
         res_alu = {execute_state.insn[31:12], 12'b0};                
@@ -402,12 +406,29 @@ module DatapathPipelined (
             end
           end
 
+          3'b010: begin
+            // slti
+            res_alu = ($signed(alu_data_rs1) < $signed(reg_imm32)) ? 32'd1 : 32'd0;
+          end
+
+          3'b011: begin
+            // sltiu
+            res_alu = ($unsigned(alu_data_rs1) < $unsigned(reg_imm32)) ? 32'd1 : 32'd0;
+          end
+
+          3'b100: begin
+            // xori
+            res_alu = alu_data_rs1 ^ reg_imm32;
+          end
+
           3'b101: begin
             //srai
             if(execute_state.insn_funct7 == 7'h20)  begin
               res_alu = $signed(alu_data_rs1) >>> reg_imm12[4:0];
             end
+            //srli
             else if(execute_state.insn_funct7 == 7'h0)  begin
+              res_alu = alu_data_rs1 >> reg_imm12[4:0];
             end
             else  begin
             end
@@ -417,6 +438,11 @@ module DatapathPipelined (
           3'b110: begin
             res_alu = alu_data_rs1 | reg_imm32;
           end 
+
+          3'b111: begin
+            // andi
+            res_alu = alu_data_rs1 & reg_imm32;
+          end
 
           default:  begin
             illegal_insn = 1'b1;
@@ -434,12 +460,78 @@ module DatapathPipelined (
               cla_cin = 1'b0;
               res_alu = cla_sum;
             end
+            // sub
             else if(execute_state.insn_funct7 == 7'h20) begin
+              cla_a = alu_data_rs1;
+              cla_b = ~alu_data_rs2 + 32'b1;
+              cla_cin = 1'b0;
+              res_alu = cla_sum;
             end
             else  begin
               illegal_insn = 1'b1;
             end
           end
+
+          3'b001: begin
+            //sll
+            if(execute_state.insn_funct7 == 7'h0) begin
+              res_alu = alu_data_rs1 << alu_data_rs2[4:0];
+            end
+
+            else  begin
+              illegal_insn = 1'b1;
+            end
+          end
+
+          3'b010: begin
+            //slt
+            if(execute_state.insn_funct7 == 7'h0) begin
+              res_alu = ($signed(alu_data_rs1) < $signed(alu_data_rs2)) ? 32'd1 : 32'd0;
+            end
+
+            else  begin
+            end
+          end
+
+          3'b011: begin
+            //sltu
+            if(execute_state.insn_funct7 == 7'h0) begin
+              res_alu  = ($unsigned(alu_data_rs1) < $unsigned(alu_data_rs2)) ? 32'd1 : 32'd0;
+            end
+
+            else  begin
+            end
+          end
+
+          3'b100: begin
+            //xor
+            res_alu = alu_data_rs1 ^ alu_data_rs2;
+          end
+
+          3'b101: begin
+            //srl
+            if(execute_state.insn_funct7 == 7'h0) begin
+              res_alu = alu_data_rs1 >>> alu_data_rs2[4:0];
+            end
+            //sra
+            if(execute_state.insn_funct7 == 7'h20) begin
+              res_alu = $signed(alu_data_rs1) >>> alu_data_rs2[4:0];
+            end
+            else  begin
+              illegal_insn = 1'b1;
+            end
+          end         
+
+          3'b110: begin
+            //or
+            res_alu = alu_data_rs1 | alu_data_rs2;
+          end
+
+          3'b111: begin
+            //and
+            res_alu = alu_data_rs1 & alu_data_rs2;
+          end
+
           default:  begin
             illegal_insn = 1'b1;
           end
@@ -454,8 +546,9 @@ module DatapathPipelined (
               flush = 1'b1;
               cla_a = execute_state.pc;
               cla_b = branch_imm;
-              jump_to_pc = cla_sum;
+              jump_to_pc = (execute_state.cycle_status == CYCLE_TAKEN_BRANCH) ? f_pc_current + 4 : cla_sum;
             end else  begin
+              jump_to_pc = f_pc_current + 4;
             end
           end
           // bne
@@ -464,21 +557,58 @@ module DatapathPipelined (
               flush = 1'b1;
               cla_a = execute_state.pc;
               cla_b = branch_imm;
-              jump_to_pc = cla_sum;
+              jump_to_pc = (execute_state.cycle_status == CYCLE_TAKEN_BRANCH) ? f_pc_current + 4 : cla_sum;
             end else  begin
+              jump_to_pc = f_pc_current + 4;
             end
           end
           // blt
           3'b100: begin
+            if($signed(alu_data_rs1) < $signed(alu_data_rs2)) begin
+              flush = 1'b1;
+              cla_a = execute_state.pc;
+              cla_b = branch_imm;
+              jump_to_pc = (execute_state.cycle_status == CYCLE_TAKEN_BRANCH) ? f_pc_current + 4 : cla_sum;
+            end
+            else  begin
+              jump_to_pc = f_pc_current + 4;
+            end
           end
           // bge
           3'b101: begin
+            if($signed(alu_data_rs1) >= $signed(alu_data_rs2)) begin
+              flush = 1'b1;
+              cla_a = execute_state.pc;
+              cla_b = branch_imm;
+              jump_to_pc = (execute_state.cycle_status == CYCLE_TAKEN_BRANCH) ? f_pc_current + 4 : cla_sum;
+            end
+            else  begin
+              jump_to_pc = f_pc_current + 4;
+            end
           end
           // bltu
           3'b110: begin
+          if($unsigned(alu_data_rs1) < $unsigned(alu_data_rs2)) begin
+            flush = 1'b1;
+            cla_a = execute_state.pc;
+            cla_b = branch_imm; 
+            jump_to_pc = (execute_state.cycle_status == CYCLE_TAKEN_BRANCH) ? f_pc_current + 4 : cla_sum;
+          end
+          else  begin
+            jump_to_pc = f_pc_current + 4;
+          end
           end
           // bgeu
           3'b111: begin
+            if($unsigned(alu_data_rs1) >= $unsigned(alu_data_rs2)) begin
+              flush = 1'b1;
+              cla_a = execute_state.pc;
+              cla_b = branch_imm;
+              jump_to_pc = (execute_state.cycle_status == CYCLE_TAKEN_BRANCH) ? f_pc_current + 4 : cla_sum;
+            end
+            else  begin
+              jump_to_pc = f_pc_current + 4;
+            end
           end
           default:  begin
             illegal_insn = 1'b1;
