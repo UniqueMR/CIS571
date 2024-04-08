@@ -355,9 +355,14 @@ module DatapathPipelined (
   logic flush;
   logic [`REG_SIZE] jump_to_pc;
 
+  //handle mem offset
+  logic [31:0] mem_addr_raw;
+  logic [31:0] mem_addr_base;
+  logic [1:0] mem_addr_offset;
+
   always_comb begin
     if(mx_bypass_rs1) begin
-      alu_data_rs1 = memory_state.data_rd;
+      alu_data_rs1 = (memory_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : memory_state.data_rd;
     end
     else if(wx_bypass_rs1)  begin
       alu_data_rs1 = writeback_state.data_rd;
@@ -369,7 +374,7 @@ module DatapathPipelined (
 
   always_comb begin
     if(mx_bypass_rs2) begin
-      alu_data_rs2 = memory_state.data_rd;
+      alu_data_rs2 = (memory_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : memory_state.data_rd;
     end
     else if(wx_bypass_rs2)  begin
       alu_data_rs2 = writeback_state.data_rd;
@@ -387,6 +392,10 @@ module DatapathPipelined (
     cla_a = 32'h0;
     cla_b = 32'h0;
     cla_cin = 1'b0;
+
+    mem_addr_raw = 32'h0;
+    mem_addr_base = 32'h0;
+    mem_addr_offset = 2'h0;
     case (execute_state.insn_opcode)
       OpcodeLui: begin
         res_alu = {execute_state.insn[31:12], 12'b0};                
@@ -621,6 +630,15 @@ module DatapathPipelined (
         endcase
       end
 
+      OpcodeLoad: begin
+        cla_a = alu_data_rs1;
+        cla_b = reg_imm32;
+        cla_cin = 1'b0;
+        mem_addr_raw = cla_sum;
+        mem_addr_base = mem_addr_raw & 32'hFFFFFFFC;
+        mem_addr_offset = mem_addr_raw[1:0];
+      end
+
       default:  begin
         res_alu = 32'd0;
         cla_a = 32'd0;
@@ -647,8 +665,11 @@ module DatapathPipelined (
     logic [`REG_SIZE] pc;
     logic [`INSN_SIZE] insn;
     logic [6:0] insn_opcode;
+    logic [2:0] insn_funct3;
     logic [4:0] insn_rd;
     logic [31:0] data_rd;
+    logic [31:0] mem_addr_base;
+    logic [1:0] mem_addr_offset;
     logic illegal_insn;
     cycle_status_e cycle_status;
   } stage_memory_t;
@@ -661,8 +682,11 @@ module DatapathPipelined (
         pc: 0,
         insn: 0,
         insn_opcode: 0,
+        insn_funct3: 0,
         insn_rd: 0,
         data_rd: 0,
+        mem_addr_base: 0,
+        mem_addr_offset: 0,
         illegal_insn: 0,
         cycle_status: CYCLE_RESET
       };
@@ -672,12 +696,54 @@ module DatapathPipelined (
         pc: execute_state.pc,
         insn: execute_state.insn,
         insn_opcode: execute_state.insn_opcode,
+        insn_funct3: execute_state.insn_funct3,
         insn_rd: execute_state.insn_rd,
         data_rd: res_alu,
+        mem_addr_base: mem_addr_base,
+        mem_addr_offset: mem_addr_offset,
         illegal_insn: illegal_insn,
         cycle_status: execute_state.cycle_status
       };
     end
+  end
+
+  assign addr_to_dmem = memory_state.mem_addr_base;
+
+  logic [31:0] m_data_to_reg;
+  logic m_illegal_insn;
+  
+  always_comb begin
+    m_illegal_insn = 1'b0;
+    case(memory_state.insn_opcode)
+      OpcodeLoad: begin
+        case(memory_state.insn_funct3)
+          //lb
+          3'b000: begin
+            case(memory_state.mem_addr_offset)
+              2'b00:  m_data_to_reg = {{24{load_data_from_dmem[7]}}, {load_data_from_dmem[7:0]}};
+              2'b01:  m_data_to_reg = {{24{load_data_from_dmem[15]}}, {load_data_from_dmem[15:8]}};
+              2'b10:  m_data_to_reg = {{24{load_data_from_dmem[23]}}, {load_data_from_dmem[23:16]}};
+              2'b11:  m_data_to_reg = {{24{load_data_from_dmem[31]}}, {load_data_from_dmem[31:24]}};
+            endcase
+          end
+
+          //lw
+          3'b010: begin
+            case(memory_state.mem_addr_offset)
+              2'b00: m_data_to_reg = load_data_from_dmem;
+              default: m_illegal_insn = 1'b1;
+            endcase
+          end
+
+          default:  begin
+          end
+        endcase
+      end
+
+      default:  begin
+        m_data_to_reg = 32'h0;
+      end
+    endcase
   end
 
   wire [255:0] m_disasm;
@@ -722,8 +788,8 @@ module DatapathPipelined (
         insn: memory_state.insn,
         insn_opcode: memory_state.insn_opcode,
         insn_rd: memory_state.insn_rd,
-        data_rd: memory_state.data_rd,
-        illegal_insn: memory_state.illegal_insn,
+        data_rd: (memory_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : memory_state.data_rd,
+        illegal_insn: (m_illegal_insn) ? m_illegal_insn : memory_state.illegal_insn,
         cycle_status: memory_state.cycle_status
       };
     end
