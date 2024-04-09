@@ -310,7 +310,6 @@ module DatapathMultiCycle (
     .o_quotient(div_quotient)
   );
 
-
   always_comb begin
     illegal_insn = 1'b0;
 

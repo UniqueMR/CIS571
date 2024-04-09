@@ -27,7 +27,7 @@ module divider_unsigned_pipelined (
         .o_quotient(o_quotient_stage1)
     );
 
-    always @(posedge clk or posedge rst) begin
+    always @(posedge clk) begin
         if(rst)    begin
             i_dividend_stage2 <= 0;
             i_remainder_stage2 <= 0;

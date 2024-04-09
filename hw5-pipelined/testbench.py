@@ -458,6 +458,7 @@ async def testDiv(dut):
     await preTestSetup(dut)
 
     await ClockCycles(dut.clk, 7)
+    # await ClockCycles(dut.clk, 8)
     assert dut.datapath.rf.regs[2].value == 1, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
 
 @cocotb.test(skip='RVTEST_ALUBR' in os.environ)
