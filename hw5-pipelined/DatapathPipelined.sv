@@ -216,7 +216,8 @@ module DatapathPipelined (
       // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
       // f_cycle_status <= CYCLE_NO_STALL;
       div_stall_curr <= 1'b0;
-    end else begin
+    end
+    else begin
       // f_cycle_status <= flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
       f_pc_current <= jump_to_pc;
       div_stall_curr <= div_stall_next;
@@ -250,13 +251,13 @@ module DatapathPipelined (
         cycle_status: CYCLE_RESET
       };
     end
-    // else if(div_stall_next) begin
-    //   decode_state <= '{
-    //     pc: decode_state.pc,
-    //     insn: decode_state.insn,
-    //     cycle_status: CYCLE_DIV2USE
-    //   };
-    // end
+    else if(div_stall_next) begin
+      decode_state <= '{
+        pc: decode_state.pc,
+        insn: decode_state.insn,
+        cycle_status: CYCLE_DIV2USE
+      };
+    end
     else begin
       decode_state <= '{
         pc: flush ? 32'h0 : f_pc_current,
@@ -350,7 +351,7 @@ module DatapathPipelined (
         data_rs1: (wd_bypass_rs1) ? writeback_state.data_rd : regfile_rs1_data,
         data_rs2: (wd_bypass_rs2) ? writeback_state.data_rd : regfile_rs2_data,
         insn_funct7: flush ? 7'h0 : insn_funct7,
-        cycle_status: flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL
+        cycle_status: flush ? CYCLE_TAKEN_BRANCH : decode_state.cycle_status
       };
     end
   end
@@ -784,22 +785,22 @@ module DatapathPipelined (
         cycle_status: CYCLE_RESET
       };
     end
-    // else if(div_stall_next)  begin
-    //   memory_state <= '{
-    //     pc: memory_state.pc,
-    //     insn: memory_state.insn,
-    //     insn_opcode: memory_state.insn_opcode,
-    //     insn_funct3: memory_state.insn_funct3,
-    //     insn_rd: memory_state.insn_rd,
-    //     data_rd: memory_state.data_rd,
-    //     mem_addr_base: memory_state.mem_addr_base,
-    //     mem_addr_offset: memory_state.mem_addr_offset,
-    //     reg_addr_to_st: memory_state.reg_addr_to_st,
-    //     data_to_dmem: memory_state.data_to_dmem,
-    //     illegal_insn: memory_state.illegal_insn,
-    //     cycle_status: CYCLE_DIV2USE
-    //   }; 
-    // end
+    else if(div_stall_curr || div_stall_next)  begin
+      memory_state <= '{
+        pc: 0,
+        insn: 0,
+        insn_opcode: 0,
+        insn_funct3: 0,
+        insn_rd: 0,
+        data_rd: 0,
+        mem_addr_base: 0,
+        mem_addr_offset: 0,
+        reg_addr_to_st: 0,
+        data_to_dmem: 0,
+        illegal_insn: 0,
+        cycle_status: CYCLE_DIV2USE
+      }; 
+    end
     else  begin
       memory_state <= '{
         pc: execute_state.pc,
@@ -813,7 +814,7 @@ module DatapathPipelined (
         reg_addr_to_st: execute_state.insn_rs2,
         data_to_dmem: alu_data_rs2,
         illegal_insn: illegal_insn,
-        cycle_status: CYCLE_NO_STALL
+        cycle_status: execute_state.cycle_status
       };
     end
   end
@@ -1010,7 +1011,7 @@ module DatapathPipelined (
         insn_rd: memory_state.insn_rd,
         data_rd: (memory_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : memory_state.data_rd,
         illegal_insn: (m_illegal_insn) ? m_illegal_insn : memory_state.illegal_insn,
-        cycle_status: CYCLE_NO_STALL
+        cycle_status: memory_state.cycle_status
       };
     end
   end
