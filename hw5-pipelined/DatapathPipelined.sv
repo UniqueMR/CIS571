@@ -342,7 +342,7 @@ module DatapathPipelined (
   wire [11:0] reg_imm12;
   wire [31:0] reg_imm32;
   wire [31:0] branch_imm;
-  assign reg_imm12 = execute_state.insn[31:20];
+  assign reg_imm12 = (execute_state.insn_opcode == OpcodeStore) ? {{execute_state.insn[31:25]}, {execute_state.insn[11:7]}} : execute_state.insn[31:20];
   assign reg_imm32 = {{20{reg_imm12[11]}}, reg_imm12};
   assign branch_imm = {{20{execute_state.insn[31]}}, execute_state.insn[7], execute_state.insn[30:25], execute_state.insn[11:8], 1'b0};
 
@@ -639,6 +639,15 @@ module DatapathPipelined (
         mem_addr_offset = mem_addr_raw[1:0];
       end
 
+      OpcodeStore: begin
+        cla_a = alu_data_rs1;
+        cla_b = reg_imm32;
+        cla_cin = 1'b0;
+        mem_addr_raw = cla_sum;
+        mem_addr_base = mem_addr_raw & 32'hFFFFFFFC;
+        mem_addr_offset = mem_addr_raw[1:0];
+      end
+
       default:  begin
         res_alu = 32'd0;
         cla_a = 32'd0;
@@ -670,6 +679,8 @@ module DatapathPipelined (
     logic [31:0] data_rd;
     logic [31:0] mem_addr_base;
     logic [1:0] mem_addr_offset;
+    logic [4:0] reg_addr_to_st;
+    logic [31:0] data_to_dmem;
     logic illegal_insn;
     cycle_status_e cycle_status;
   } stage_memory_t;
@@ -687,6 +698,8 @@ module DatapathPipelined (
         data_rd: 0,
         mem_addr_base: 0,
         mem_addr_offset: 0,
+        reg_addr_to_st: 0,
+        data_to_dmem: 0,
         illegal_insn: 0,
         cycle_status: CYCLE_RESET
       };
@@ -701,6 +714,8 @@ module DatapathPipelined (
         data_rd: res_alu,
         mem_addr_base: mem_addr_base,
         mem_addr_offset: mem_addr_offset,
+        reg_addr_to_st: execute_state.insn_rs2,
+        data_to_dmem: alu_data_rs2,
         illegal_insn: illegal_insn,
         cycle_status: execute_state.cycle_status
       };
@@ -710,10 +725,17 @@ module DatapathPipelined (
   assign addr_to_dmem = memory_state.mem_addr_base;
 
   logic [31:0] m_data_to_reg;
+  logic [31:0] m_data_to_dmem;
+  logic [3:0] m_st_we_to_dmem;
   logic m_illegal_insn;
+
+  assign store_data_to_dmem = m_data_to_dmem;
+  assign store_we_to_dmem = m_st_we_to_dmem;
   
   always_comb begin
     m_illegal_insn = 1'b0;
+    m_data_to_dmem = 32'h0;
+    m_st_we_to_dmem = 4'h0;
     case(memory_state.insn_opcode)
       OpcodeLoad: begin
         case(memory_state.insn_funct3)
@@ -727,6 +749,34 @@ module DatapathPipelined (
             endcase
           end
 
+          // lh
+          3'b001: begin
+            case(memory_state.mem_addr_offset)
+              2'b00: m_data_to_reg = {{16{load_data_from_dmem[15]}}, {load_data_from_dmem[15:0]}};
+              2'b10: m_data_to_reg = {{16{load_data_from_dmem[31]}}, {load_data_from_dmem[31:16]}};
+              default: m_illegal_insn = 1'b1;
+            endcase
+          end
+
+          // lbu
+          3'b100: begin
+            case(memory_state.mem_addr_offset)
+              2'b00:  m_data_to_reg = {{24'b0}, {load_data_from_dmem[7:0]}};
+              2'b01:  m_data_to_reg = {{24'b0}, {load_data_from_dmem[15:8]}};
+              2'b10:  m_data_to_reg = {{24'b0}, {load_data_from_dmem[23:16]}};
+              2'b11:  m_data_to_reg = {{24'b0}, {load_data_from_dmem[31:24]}};
+            endcase
+          end
+
+          // lhu
+          3'b101: begin
+            case(memory_state.mem_addr_offset)
+              2'b00: m_data_to_reg = {{16'b0}, {load_data_from_dmem[15:0]}};
+              2'b10: m_data_to_reg = {{16'b0}, {load_data_from_dmem[31:16]}};
+              default: m_illegal_insn = 1'b1;
+            endcase
+          end
+
           //lw
           3'b010: begin
             case(memory_state.mem_addr_offset)
@@ -736,6 +786,69 @@ module DatapathPipelined (
           end
 
           default:  begin
+            m_illegal_insn = 1'b1;
+          end
+        endcase
+      end
+
+      OpcodeStore:  begin
+        case(memory_state.insn_funct3)
+          // sb
+          3'b000: begin
+            case(memory_state.mem_addr_offset)
+              2'b00: begin
+                m_st_we_to_dmem = 4'b0001;
+                m_data_to_dmem[7:0] = (wm_bypass_data) ? writeback_state.data_rd[7:0] : memory_state.data_to_dmem[7:0];
+              end
+
+              2'b01:  begin
+                m_st_we_to_dmem = 4'b0010;
+                m_data_to_dmem[15:8] = (wm_bypass_data) ? writeback_state.data_rd[7:0] : memory_state.data_to_dmem[7:0];
+              end
+
+              2'b10: begin
+                m_st_we_to_dmem = 4'b0100;
+                m_data_to_dmem[23:16] = (wm_bypass_data) ? writeback_state.data_rd[7:0] : memory_state.data_to_dmem[7:0];
+              end
+
+              2'b11:  begin
+                m_st_we_to_dmem = 4'b1000;
+                m_data_to_dmem[31:24] = (wm_bypass_data) ? writeback_state.data_rd[7:0] : memory_state.data_to_dmem[7:0];               
+              end
+            endcase
+          end
+
+          // sh
+          3'b001: begin
+            case(memory_state.mem_addr_offset)
+              2'b00:  begin
+                m_st_we_to_dmem = 4'b0011;
+                m_data_to_dmem[15:0] = (wm_bypass_data) ? writeback_state.data_rd[15:0] : memory_state.data_to_dmem[15:0];
+              end
+
+              2'b10: begin
+                m_st_we_to_dmem = 4'b1100;
+                m_data_to_dmem[31:16] = (wm_bypass_data) ? writeback_state.data_rd[15:0] : memory_state.data_to_dmem[15:0];
+              end
+
+              default:  m_illegal_insn = 1'b1;
+            endcase
+          end
+
+          // sw
+          3'b010: begin
+            case(memory_state.mem_addr_offset)
+              2'b00:  begin
+                m_st_we_to_dmem = 4'b1111;
+                m_data_to_dmem = (wm_bypass_data) ? writeback_state.data_rd : memory_state.data_to_dmem;
+              end
+
+              default: m_illegal_insn = 1'b1;
+            endcase
+          end
+
+          default:  begin
+            m_illegal_insn = 1'b1;
           end
         endcase
       end
@@ -795,7 +908,7 @@ module DatapathPipelined (
     end
   end
 
-  assign regfile_we = (writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 1'b0 : 1'b1;
+  assign regfile_we = (writeback_state.insn == 32'h0 || writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 1'b0 : 1'b1;
   assign regfile_rd = writeback_state.insn_rd;
   assign regfile_rd_data = writeback_state.data_rd;
 
@@ -832,13 +945,17 @@ module DatapathPipelined (
   wire wx_bypass_rs2;
   wire wd_bypass_rs1;
   wire wd_bypass_rs2;
+  wire wm_bypass_data;
+  // wire wm_bypass_addr;
   wire m_rd_make_sense;
+  wire m_rs2_make_sense;
   wire w_rd_make_sense;
   wire x_rs1_make_sense;
   wire x_rs2_make_sense;
   wire d_rs1_make_sense;
   wire d_rs2_make_sense;
   assign m_rd_make_sense = memory_state.insn_opcode == OpcodeLui || memory_state.insn_opcode == OpcodeAuipc || memory_state.insn_opcode == OpcodeRegImm || memory_state.insn_opcode == OpcodeRegReg || memory_state.insn_opcode == OpcodeLoad || memory_state.insn_opcode == OpcodeJal || memory_state.insn_opcode == OpcodeJalr;
+  assign m_rs2_make_sense = memory_state.insn_opcode == OpcodeStore;
   assign w_rd_make_sense = writeback_state.insn_opcode == OpcodeLui || writeback_state.insn_opcode == OpcodeAuipc || writeback_state.insn_opcode == OpcodeRegImm || writeback_state.insn_opcode == OpcodeRegReg || writeback_state.insn_opcode == OpcodeLoad || writeback_state.insn_opcode == OpcodeJal || writeback_state.insn_opcode == OpcodeJalr;
   assign x_rs1_make_sense = execute_state.insn_opcode == OpcodeRegImm || execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch || execute_state.insn_opcode == OpcodeLoad || execute_state.insn_opcode == OpcodeStore || execute_state.insn_opcode == OpcodeJalr;
   assign x_rs2_make_sense = execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeStore || execute_state.insn_opcode == OpcodeBranch;
@@ -850,6 +967,8 @@ module DatapathPipelined (
   assign wx_bypass_rs2 = (execute_state.insn_rs2 == writeback_state.insn_rd && illegal_insn == 1'b0 && writeback_state.illegal_insn == 1'b0 && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && x_rs2_make_sense);
   assign wd_bypass_rs1 = (insn_rs1 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && d_rs1_make_sense);
   assign wd_bypass_rs2 = (insn_rs2 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && d_rs2_make_sense);
+  assign wm_bypass_data = (writeback_state.insn_rd == memory_state.reg_addr_to_st && w_rd_make_sense && m_rs2_make_sense);
+  // assign wm_bypass_addr = ();
 
   assign trace_writeback_pc = writeback_state.pc;
   assign trace_writeback_insn = writeback_state.insn;
