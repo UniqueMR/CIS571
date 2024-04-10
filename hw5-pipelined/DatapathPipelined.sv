@@ -210,17 +210,20 @@ module DatapathPipelined (
 
   // program counter
   logic div_stall_next, div_stall_curr;
+  logic load_stall_next, load_stall_curr;
   always_ff @(posedge clk) begin
     if (rst) begin
       f_pc_current <= 32'd0;
       // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
       // f_cycle_status <= CYCLE_NO_STALL;
       div_stall_curr <= 1'b0;
+      load_stall_curr <= 1'b0;
     end
     else begin
       // f_cycle_status <= flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
       f_pc_current <= jump_to_pc;
       div_stall_curr <= div_stall_next;
+      load_stall_curr <= load_stall_next;
     end
   end
   // send PC to imem
@@ -339,6 +342,23 @@ module DatapathPipelined (
         cycle_status: CYCLE_DIV2USE
       };
     end
+
+    else if(load_stall_next) begin
+      execute_state <= '{
+        pc: execute_state.pc,
+        insn: execute_state.insn,
+        insn_opcode: execute_state.insn_opcode,
+        insn_rd: execute_state.insn_rd,
+        insn_funct3: execute_state.insn_funct3,
+        insn_rs1: execute_state.insn_rs1,
+        insn_rs2: execute_state.insn_rs2,
+        data_rs1: execute_state.data_rs1,
+        data_rs2: execute_state.data_rs2,
+        insn_funct7: execute_state.insn_funct7,
+        cycle_status: CYCLE_LOAD2USE
+      };
+    end
+
     else begin
       execute_state <= '{
         pc: flush ? 32'h0 : decode_state.pc,
@@ -785,7 +805,7 @@ module DatapathPipelined (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(div_stall_curr || div_stall_next)  begin
+    else if(div_stall_curr || div_stall_next || load_stall_next)  begin
       memory_state <= '{
         pc: 0,
         insn: 0,
@@ -833,6 +853,20 @@ module DatapathPipelined (
     m_illegal_insn = 1'b0;
     m_data_to_dmem = 32'h0;
     m_st_we_to_dmem = 4'h0;
+
+    if(memory_state.insn_opcode == OpcodeLoad)  begin
+      if(memory_state.insn_rd == execute_state.insn_rs1 && x_rs1_make_sense)  begin
+        load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+      end
+      else if(memory_state.insn_rd == execute_state.insn_rs2 && x_rs2_make_sense) begin
+        load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+      end
+      else load_stall_next = 1'b0;
+    end
+    else  begin
+      load_stall_next = 1'b0;
+    end
+
     case(memory_state.insn_opcode)
       OpcodeLoad: begin
         case(memory_state.insn_funct3)
