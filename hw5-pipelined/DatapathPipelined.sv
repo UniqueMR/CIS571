@@ -1074,7 +1074,7 @@ module DatapathPipelined (
     end
   end
 
-  assign regfile_we = (writeback_state.insn == 32'h0 || writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH) ? 1'b0 : 1'b1;
+  assign regfile_we = (writeback_state.insn == 32'h0 || writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH || writeback_state.insn_opcode == OpcodeStore || writeback_state.insn_opcode == OpcodeBranch || writeback_state.insn_opcode == OpcodeMiscMem || writeback_state.insn_opcode == OpcodeEnviron) ? 1'b0 : 1'b1;
   assign regfile_rd = writeback_state.insn_rd;
   assign regfile_rd_data = writeback_state.data_rd;
 
