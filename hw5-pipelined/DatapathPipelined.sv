@@ -219,10 +219,10 @@ module DatapathPipelined (
       div_stall_curr <= 1'b0;
       load_stall_curr <= 1'b0;
     end
-    else if(fence)  begin
+    else if(fence || div_stall_next || load_stall_next)  begin
       f_pc_current <= f_pc_current;
-      div_stall_curr <= div_stall_curr;
-      load_stall_curr <= load_stall_curr;
+      div_stall_curr <= div_stall_next;
+      load_stall_curr <= load_stall_next;
     end
     else begin
       // f_cycle_status <= flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
@@ -261,11 +261,11 @@ module DatapathPipelined (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(div_stall_next || fence) begin
+    else if(div_stall_next || load_stall_next || fence) begin
       decode_state <= '{
         pc: decode_state.pc,
         insn: decode_state.insn,
-        cycle_status: (div_stall_next) ? CYCLE_DIV2USE : CYCLE_FENCEI
+        cycle_status: (div_stall_next) ? CYCLE_DIV2USE : ((load_stall_next) ? CYCLE_LOAD2USE : CYCLE_FENCEI)
       };
     end
     else begin
@@ -434,7 +434,7 @@ module DatapathPipelined (
 
   always_comb begin
     if(mx_bypass_rs1) begin
-      alu_data_rs1 = (memory_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : memory_state.data_rd;
+      alu_data_rs1 = memory_state.data_rd;
     end
     else if(wx_bypass_rs1)  begin
       alu_data_rs1 = writeback_state.data_rd;
@@ -446,7 +446,7 @@ module DatapathPipelined (
 
   always_comb begin
     if(mx_bypass_rs2) begin
-      alu_data_rs2 = (memory_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : memory_state.data_rd;
+      alu_data_rs2 = memory_state.data_rd;
     end
     else if(wx_bypass_rs2)  begin
       alu_data_rs2 = writeback_state.data_rd;
