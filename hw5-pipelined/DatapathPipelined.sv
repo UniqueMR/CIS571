@@ -456,6 +456,9 @@ module DatapathPipelined (
     end
   end
 
+  wire [31:0] jal_imm;
+  assign jal_imm = {{12{execute_state.insn[31]}}, execute_state.insn[19:12], execute_state.insn[20], execute_state.insn[30:21], 1'b0};
+
   always_comb begin
     illegal_insn = 1'b0;
     flush = 1'b0;
@@ -489,6 +492,10 @@ module DatapathPipelined (
     case (execute_state.insn_opcode)
       OpcodeLui: begin
         res_alu = {execute_state.insn[31:12], 12'b0};                
+      end
+
+      OpcodeAuipc:  begin
+        res_alu = execute_state.pc + {execute_state.insn[31:12], 12'b0};
       end
 
       OpcodeRegImm: begin
@@ -656,6 +663,18 @@ module DatapathPipelined (
             illegal_insn = 1'b1;
           end
         endcase
+      end
+
+      OpcodeJal:  begin
+        flush = 1'b1;
+        res_alu = execute_state.pc + 4;
+        jump_to_pc = execute_state.pc + jal_imm;
+      end
+
+      OpcodeJalr: begin
+        flush = 1'b1;
+        res_alu = execute_state.pc + 4;
+        jump_to_pc = (alu_data_rs1 + reg_imm32) & ~32'h1;
       end
 
       OpcodeBranch: begin
