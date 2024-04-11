@@ -144,7 +144,7 @@ module DatapathPipelined (
   localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
   localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
   localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
+  localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
   localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
 
   localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
@@ -219,6 +219,11 @@ module DatapathPipelined (
       div_stall_curr <= 1'b0;
       load_stall_curr <= 1'b0;
     end
+    else if(fence)  begin
+      f_pc_current <= f_pc_current;
+      div_stall_curr <= div_stall_curr;
+      load_stall_curr <= load_stall_curr;
+    end
     else begin
       // f_cycle_status <= flush ? CYCLE_TAKEN_BRANCH : CYCLE_NO_STALL;
       f_pc_current <= jump_to_pc;
@@ -229,6 +234,8 @@ module DatapathPipelined (
   // send PC to imem
   assign pc_to_imem = f_pc_current;
   assign f_insn = flush ? 32'h0 : insn_from_imem;
+
+  logic fence;
 
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
@@ -254,11 +261,11 @@ module DatapathPipelined (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(div_stall_next) begin
+    else if(div_stall_next || fence) begin
       decode_state <= '{
         pc: decode_state.pc,
         insn: decode_state.insn,
-        cycle_status: CYCLE_DIV2USE
+        cycle_status: (div_stall_next) ? CYCLE_DIV2USE : CYCLE_FENCEI
       };
     end
     else begin
@@ -291,6 +298,20 @@ module DatapathPipelined (
   assign regfile_rs1 = insn_rs1;
   assign regfile_rs2 = insn_rs2;
 
+  always_comb begin
+    if(insn_opcode == OpcodeMiscMem)  begin
+      if(execute_state.insn_opcode == OpcodeStore || memory_state.insn_opcode == OpcodeStore) begin
+        fence = 1'b1;
+      end
+      else  begin
+        fence = 1'b0;
+      end
+    end
+    else  begin
+      fence = 1'b0;
+    end
+  end
+
   /****************/
   /* EXECUTE STAGE */
   /****************/
@@ -312,7 +333,7 @@ module DatapathPipelined (
   stage_execute_t execute_state;
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || fence) begin
       execute_state <= '{
         pc: 0,
         insn: 0,
@@ -324,10 +345,10 @@ module DatapathPipelined (
         data_rs1: 0,
         data_rs2: 0,
         insn_funct7: 0,
-        cycle_status: CYCLE_RESET
+        cycle_status: (rst) ? CYCLE_RESET : CYCLE_FENCEI
       };
     end 
-    else if(div_stall_next) begin
+    else if(div_stall_next || load_stall_next) begin
       execute_state <= '{
         pc: execute_state.pc,
         insn: execute_state.insn,
@@ -339,23 +360,7 @@ module DatapathPipelined (
         data_rs1: execute_state.data_rs1,
         data_rs2: execute_state.data_rs2,
         insn_funct7: execute_state.insn_funct7,
-        cycle_status: CYCLE_DIV2USE
-      };
-    end
-
-    else if(load_stall_next) begin
-      execute_state <= '{
-        pc: execute_state.pc,
-        insn: execute_state.insn,
-        insn_opcode: execute_state.insn_opcode,
-        insn_rd: execute_state.insn_rd,
-        insn_funct3: execute_state.insn_funct3,
-        insn_rs1: execute_state.insn_rs1,
-        insn_rs2: execute_state.insn_rs2,
-        data_rs1: execute_state.data_rs1,
-        data_rs2: execute_state.data_rs2,
-        insn_funct7: execute_state.insn_funct7,
-        cycle_status: CYCLE_LOAD2USE
+        cycle_status: (div_stall_next) ? CYCLE_DIV2USE : CYCLE_LOAD2USE
       };
     end
 
@@ -818,7 +823,7 @@ module DatapathPipelined (
         reg_addr_to_st: 0,
         data_to_dmem: 0,
         illegal_insn: 0,
-        cycle_status: CYCLE_DIV2USE
+        cycle_status: (load_stall_next) ? CYCLE_LOAD2USE : CYCLE_DIV2USE
       }; 
     end
     else  begin
@@ -848,7 +853,7 @@ module DatapathPipelined (
 
   assign store_data_to_dmem = m_data_to_dmem;
   assign store_we_to_dmem = m_st_we_to_dmem;
-  
+
   always_comb begin
     m_illegal_insn = 1'b0;
     m_data_to_dmem = 32'h0;
