@@ -357,8 +357,8 @@ module DatapathPipelined (
         insn_funct3: execute_state.insn_funct3,
         insn_rs1: execute_state.insn_rs1,
         insn_rs2: execute_state.insn_rs2,
-        data_rs1: execute_state.data_rs1,
-        data_rs2: execute_state.data_rs2,
+        data_rs1: alu_data_rs1,
+        data_rs2: alu_data_rs2,
         insn_funct7: execute_state.insn_funct7,
         cycle_status: (div_stall_next) ? CYCLE_DIV2USE : CYCLE_LOAD2USE
       };
