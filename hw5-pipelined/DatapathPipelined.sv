@@ -459,6 +459,10 @@ module DatapathPipelined (
   wire [31:0] jal_imm;
   assign jal_imm = {{12{execute_state.insn[31]}}, execute_state.insn[19:12], execute_state.insn[20], execute_state.insn[30:21], 1'b0};
 
+  logic [63:0]  mul_temp;
+  logic [31:0]  rs1_abs;
+  logic [63:0]  mul_abs;
+
   always_comb begin
     illegal_insn = 1'b0;
     flush = 1'b0;
@@ -471,6 +475,10 @@ module DatapathPipelined (
     div_dividend = 32'b0;
     div_dividor = 32'b0;
     pos_neg = 1'b0;
+
+    mul_temp = 64'h0;
+    rs1_abs = 32'h0;
+    mul_abs = 64'h0;
 
     if(execute_state.insn_opcode == OpcodeRegReg && execute_state.insn_funct3[2] == 1'b1 && execute_state.insn_funct7 == 7'h1)  begin
       if(div_stall_curr == 1'b0)  begin
@@ -578,6 +586,11 @@ module DatapathPipelined (
               cla_cin = 1'b0;
               res_alu = cla_sum;
             end
+            // mul
+            else if(execute_state.insn_funct7 == 7'h1)  begin
+              mul_temp = alu_data_rs1 * alu_data_rs2;
+              res_alu = mul_temp[31:0];
+            end
             else  begin
               illegal_insn = 1'b1;
             end
@@ -588,7 +601,11 @@ module DatapathPipelined (
             if(execute_state.insn_funct7 == 7'h0) begin
               res_alu = alu_data_rs1 << alu_data_rs2[4:0];
             end
-
+            //mulh
+            else if(execute_state.insn_funct7 == 7'h1)  begin
+              mul_temp = $signed(alu_data_rs1) * $signed(alu_data_rs2);
+              res_alu = mul_temp[63:32];
+            end
             else  begin
               illegal_insn = 1'b1;
             end
@@ -599,7 +616,13 @@ module DatapathPipelined (
             if(execute_state.insn_funct7 == 7'h0) begin
               res_alu = ($signed(alu_data_rs1) < $signed(alu_data_rs2)) ? 32'd1 : 32'd0;
             end
-
+            // mulhsu
+            else if(execute_state.insn_funct7 == 7'h1)  begin
+              rs1_abs = alu_data_rs1[31] ? (~alu_data_rs1 + 1) : alu_data_rs1;
+              mul_abs = rs1_abs * $unsigned(alu_data_rs2);
+              mul_temp = ~mul_abs + 1;  
+              res_alu = alu_data_rs1[31] ? mul_temp[63:32] : mul_abs[63:32]; 
+            end
             else  begin
             end
           end
@@ -609,7 +632,11 @@ module DatapathPipelined (
             if(execute_state.insn_funct7 == 7'h0) begin
               res_alu  = ($unsigned(alu_data_rs1) < $unsigned(alu_data_rs2)) ? 32'd1 : 32'd0;
             end
-
+            // mulhu
+            else if(execute_state.insn_funct7 == 7'h1)  begin
+              mul_temp = $unsigned(alu_data_rs1) * $unsigned(alu_data_rs2);
+              res_alu = mul_temp[63:32]; 
+            end
             else  begin
             end
           end
@@ -644,6 +671,18 @@ module DatapathPipelined (
             else if(execute_state.insn_funct7 == 7'h20) begin
               res_alu = $signed(alu_data_rs1) >>> alu_data_rs2[4:0];
             end
+            //divu
+            else if(execute_state.insn_funct7 == 7'd1)  begin
+              div_dividend = alu_data_rs1;
+              div_dividor = alu_data_rs2;
+
+              if(alu_data_rs2 == 32'h0) begin
+                res_alu = 32'hFFFFFFFF; 
+              end
+              else  begin
+                res_alu = div_quotient;
+              end
+            end
             else  begin
               illegal_insn = 1'b1;
             end
@@ -651,12 +690,49 @@ module DatapathPipelined (
 
           3'b110: begin
             //or
-            res_alu = alu_data_rs1 | alu_data_rs2;
+            if(execute_state.insn_funct7 == 7'h0) begin
+              res_alu = alu_data_rs1 | alu_data_rs2;
+            end
+
+            //rem
+            else if(execute_state.insn_funct7 == 7'd1)  begin
+              div_dividend = alu_data_rs1[31] ? (~alu_data_rs1 + 1) : alu_data_rs1;
+              div_dividor = alu_data_rs2[31] ? (~alu_data_rs2 + 1) : alu_data_rs2;
+
+              if(alu_data_rs2 == 32'd0) begin
+                res_alu = alu_data_rs1;
+              end
+              else  begin
+                res_alu = alu_data_rs1[31] ? (~div_remainder + 1) : div_remainder;
+              end
+            end
+
+            else  begin
+              illegal_insn = 1'b1;
+            end
           end
 
           3'b111: begin
             //and
-            res_alu = alu_data_rs1 & alu_data_rs2;
+            if(execute_state.insn_funct7 == 7'd0) begin
+              res_alu = alu_data_rs1 & alu_data_rs2;
+            end
+
+            //remu
+            else if(execute_state.insn_funct7 == 7'd1)  begin
+              div_dividend = alu_data_rs1;
+              div_dividor = alu_data_rs2;
+
+              if (alu_data_rs2 == 32'd0) begin
+                res_alu = alu_data_rs1;
+              end else begin
+                res_alu = div_remainder;
+              end
+            end
+
+            else  begin
+              illegal_insn = 1'b1;
+            end
           end
 
           default:  begin
