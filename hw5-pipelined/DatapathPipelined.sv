@@ -953,13 +953,25 @@ module DatapathPipelined (
     m_st_we_to_dmem = 4'h0;
 
     if(memory_state.insn_opcode == OpcodeLoad)  begin
-      if(memory_state.insn_rd == execute_state.insn_rs1 && x_rs1_make_sense)  begin
-        load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+      if(execute_state.insn_opcode != OpcodeStore)  begin
+        if(memory_state.insn_rd == execute_state.insn_rs1 && x_rs1_make_sense)  begin
+          load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+        end
+        else if(memory_state.insn_rd == execute_state.insn_rs2 && x_rs2_make_sense) begin
+          load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+        end
+        else begin
+          load_stall_next = 1'b0;
+        end
       end
-      else if(memory_state.insn_rd == execute_state.insn_rs2 && x_rs2_make_sense) begin
-        load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+      else  begin
+        if(memory_state.insn_rd == execute_state.insn_rs1 && x_rs1_make_sense)  begin
+          load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+        end
+        else  begin
+          load_stall_next = 1'b0;
+        end
       end
-      else load_stall_next = 1'b0;
     end
     else  begin
       load_stall_next = 1'b0;
