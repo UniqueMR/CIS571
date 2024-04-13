@@ -964,7 +964,12 @@ module DatapathPipelined (
         end
       end
       else  begin
-        load_stall_next = 1'b0;
+        if(memory_state.insn_rd == execute_state.insn_rs1 && x_rs1_make_sense)  begin
+          load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
+        end
+        else  begin
+          load_stall_next = 1'b0;
+        end
       end
     end
     else  begin
