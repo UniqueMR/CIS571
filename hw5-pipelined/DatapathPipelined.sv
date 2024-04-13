@@ -200,9 +200,6 @@ module DatapathPipelined (
     else if(flush)  begin
       f_cycle_status = CYCLE_TAKEN_BRANCH;
     end
-    else if(div_stall_next) begin
-      f_cycle_status = CYCLE_DIV2USE;
-    end
     else  begin
       f_cycle_status = CYCLE_NO_STALL;
     end
@@ -265,7 +262,7 @@ module DatapathPipelined (
       decode_state <= '{
         pc: decode_state.pc,
         insn: decode_state.insn,
-        cycle_status: (div_stall_next) ? CYCLE_DIV2USE : ((load_stall_next) ? CYCLE_LOAD2USE : CYCLE_FENCEI)
+        cycle_status: decode_state.cycle_status
       };
     end
     else begin
@@ -360,7 +357,7 @@ module DatapathPipelined (
         data_rs1: alu_data_rs1,
         data_rs2: alu_data_rs2,
         insn_funct7: execute_state.insn_funct7,
-        cycle_status: (div_stall_next) ? CYCLE_DIV2USE : CYCLE_LOAD2USE
+        cycle_status: execute_state.cycle_status
       };
     end
 
@@ -1134,7 +1131,7 @@ module DatapathPipelined (
         insn_rd: execute_state.insn_rd,
         data_rd: res_alu,
         illegal_insn: illegal_insn,
-        cycle_status: CYCLE_DIV2USE
+        cycle_status: execute_state.cycle_status
       };
     end
     else  begin
