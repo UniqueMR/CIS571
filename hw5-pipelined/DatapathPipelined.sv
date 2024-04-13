@@ -332,6 +332,7 @@ module DatapathPipelined (
   always_ff @(posedge clk) begin
     if (rst || fence) begin
       execute_state <= '{
+        // pc: (fence) ? (flush ? 32'h0 : decode_state.pc) : 0,
         pc: 0,
         insn: 0,
         insn_opcode: 0,
@@ -904,7 +905,7 @@ module DatapathPipelined (
     end
     else if(div_stall_curr || div_stall_next || load_stall_next)  begin
       memory_state <= '{
-        pc: 0,
+        pc: execute_state.pc,
         insn: 0,
         insn_opcode: 0,
         insn_funct3: 0,
