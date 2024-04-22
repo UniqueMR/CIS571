@@ -136,17 +136,13 @@ module MemoryAxiLite #(
 
   // // memory is an array of 4B words
   logic [DATA_WIDTH-1:0] mem_array[NUM_WORDS];
-  // localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
-  // localparam int AddrLsb = 2;
+  localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
+  localparam int AddrLsb = 2;
 
   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
   // localparam bit [1:0] ResponseOkay = 2'b00;
   // localparam bit [1:0] ResponseSubordinateError = 2'b10;
   // localparam bit [1:0] ResponseDecodeError = 2'b11;
-
-  wire [DATA_WIDTH-1:0] mem_addr_read_base;
-
-  assign mem_addr_read_base = {2'b00, insn.ARADDR[31:2]};
 
 `ifndef FORMAL
   always_comb begin
@@ -172,11 +168,24 @@ module MemoryAxiLite #(
       data.AWREADY <= 1;
       data.WREADY <= 1;
     end else begin
-      if(insn.WVALID && insn.AWVALID) mem_array[insn.AWADDR] <= insn.WDATA;
+      if(insn.WVALID && insn.AWVALID) begin
+        insn.WREADY <= 1'b1;
+        mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA;
+      end
       if(insn.RREADY && insn.ARREADY) begin
-        insn.RDATA <= mem_array[mem_addr_read_base];
+        insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
         insn.RVALID <= 1'b1;
       end
+
+      if(data.WVALID && data.AWVALID) begin
+        data.WREADY <= 1'b1;
+        mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
+      end
+      if(data.ARVALID) begin
+        data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
+        data.RVALID <= 1'b1;
+      end
+
     end
   end
 
