@@ -52,6 +52,30 @@ module RegFile (
     input logic rst
 );
   // TODO: copy your RegFile code here
+  localparam int NumRegs = 32;
+  logic [`REG_SIZE] regs[NumRegs];
+
+  // wire up the output port with the corresponding register
+  assign regs[0] = 32'd0;
+  assign rs1_data = regs[rs1];
+  assign rs2_data = regs[rs2];
+
+  // flip-flops
+  always_ff @(posedge clk)  begin
+    // in reset condition, set all regs to 0
+    if(rst)  begin
+      for(int i = 1; i < 32; i++) begin
+        regs[i] <= 32'd0;
+      end
+    end
+
+    // in write enable mode, write the corresponding reg with data
+    else if(we)  begin
+      if(rd != 5'b0)  begin
+        regs[rd] <= rd_data;
+      end
+    end
+  end
 
 endmodule
 
