@@ -140,7 +140,7 @@ module MemoryAxiLite #(
   localparam int AddrLsb = 2;
 
   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
-  // localparam bit [1:0] ResponseOkay = 2'b00;
+  localparam bit [1:0] ResponseOkay = 2'b00;
   // localparam bit [1:0] ResponseSubordinateError = 2'b10;
   // localparam bit [1:0] ResponseDecodeError = 2'b11;
 
@@ -168,9 +168,11 @@ module MemoryAxiLite #(
       data.AWREADY <= 1;
       data.WREADY <= 1;
     end else begin
+      
       if(insn.WVALID && insn.AWVALID) begin
-        insn.WREADY <= 1'b1;
         mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA;
+        insn.BVALID <= 1'b1;
+        insn.BRESP <= ResponseOkay;
       end
       if(insn.RREADY && insn.ARREADY) begin
         insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
@@ -178,8 +180,9 @@ module MemoryAxiLite #(
       end
 
       if(data.WVALID && data.AWVALID) begin
-        data.WREADY <= 1'b1;
         mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
+        data.BVALID <= 1'b1;
+        data.BRESP <= ResponseOkay;
       end
       if(data.ARVALID) begin
         data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
