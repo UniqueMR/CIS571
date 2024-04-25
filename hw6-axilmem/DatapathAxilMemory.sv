@@ -183,12 +183,13 @@ module MemoryAxiLite #(
 
   // // memory is an array of 4B words
   logic [DATA_WIDTH-1:0] mem_array[NUM_WORDS];
+
   localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
   localparam int AddrLsb = 2;
 
   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
   localparam bit [1:0] ResponseOkay = 2'b00;
-  // localparam bit [1:0] ResponseSubordinateError = 2'b10;
+  localparam bit [1:0] ResponseSubordinateError = 2'b10;
   // localparam bit [1:0] ResponseDecodeError = 2'b11;
 
 `ifndef FORMAL
@@ -221,19 +222,36 @@ module MemoryAxiLite #(
         insn.BVALID <= 1'b1;
         insn.BRESP <= ResponseOkay;
       end
-      if(insn.RREADY && insn.ARREADY) begin
+      else  begin
+        insn.BVALID <= 1'b0;
+        insn.BRESP <= ResponseSubordinateError;
+      end
+
+      if(insn.ARVALID && insn.RREADY) begin
         insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
         insn.RVALID <= 1'b1;
       end
+      else  begin
+        insn.RVALID <= 1'b0;
+      end
+      
 
       if(data.WVALID && data.AWVALID) begin
         mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
         data.BVALID <= 1'b1;
         data.BRESP <= ResponseOkay;
       end
-      if(data.ARVALID) begin
+      else  begin
+        data.BVALID <= 1'b0;
+        data.BRESP <= ResponseSubordinateError;
+      end
+
+      if(data.ARVALID && data.RREADY) begin
         data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
         data.RVALID <= 1'b1;
+      end
+      else  begin
+        data.RVALID <= 1'b0;
       end
 
     end
@@ -425,15 +443,24 @@ module DatapathAxilMemory (
   wire [`REG_SIZE] f_insn;
   cycle_status_e f_cycle_status;
 
+  logic f_insn_addr_read_valid;
+  logic f_insn_read_ready;
+
   always_comb begin
     if(rst) begin
       f_cycle_status = CYCLE_RESET;
+      f_insn_addr_read_valid = 1'b0;
+      f_insn_read_ready = 1'b0;
     end
     else if(flush)  begin
       f_cycle_status = CYCLE_TAKEN_BRANCH;
+      f_insn_addr_read_valid = 1'b0;
+      f_insn_read_ready = 1'b0;
     end
     else  begin
       f_cycle_status = CYCLE_NO_STALL;
+      f_insn_addr_read_valid = 1'b1;
+      f_insn_read_ready = 1'b1;
     end
   end
 
@@ -463,6 +490,8 @@ module DatapathAxilMemory (
   // send PC to imem
   assign imem.ARADDR = f_pc_current;
   assign f_insn = flush ? 32'h0 : imem.RDATA;
+  assign imem.ARVALID = f_insn_addr_read_valid;
+  assign imem.RREADY = f_insn_read_ready;
 
   logic fence;
 
