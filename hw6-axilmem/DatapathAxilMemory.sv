@@ -511,29 +511,47 @@ module DatapathAxilMemory (
 
   // this shows how to package up state in a `struct packed`, and how to pass it between stages
   stage_decode_t decode_state;
-  always_ff @(posedge clk) begin
+  // always_ff @(posedge clk) begin
+  //   if (rst) begin
+  //     decode_state <= '{
+  //       pc: 0,
+  //       insn: 0,
+  //       cycle_status: CYCLE_RESET
+  //     };
+  //   end
+  //   else if(div_stall_next || load_stall_next || fence) begin
+  //     decode_state <= '{
+  //       pc: decode_state.pc,
+  //       insn: decode_state.insn,
+  //       cycle_status: decode_state.cycle_status
+  //     };
+  //   end
+  //   else begin
+  //     decode_state <= '{
+  //       pc: flush ? 32'h0 : f_pc_current,
+  //       insn: f_insn,
+  //       cycle_status: f_cycle_status
+  //     };
+  //   end
+  // end
+
+  always_comb begin
     if (rst) begin
-      decode_state <= '{
+      decode_state = '{
         pc: 0,
         insn: 0,
         cycle_status: CYCLE_RESET
       };
     end
-    else if(div_stall_next || load_stall_next || fence) begin
-      decode_state <= '{
-        pc: decode_state.pc,
-        insn: decode_state.insn,
-        cycle_status: decode_state.cycle_status
-      };
-    end
     else begin
-      decode_state <= '{
-        pc: flush ? 32'h0 : f_pc_current,
+      decode_state = '{
+        pc: f_pc_current,
         insn: f_insn,
         cycle_status: f_cycle_status
       };
     end
   end
+
   wire [255:0] d_disasm;
   Disasm #(
       .PREFIX("D")
