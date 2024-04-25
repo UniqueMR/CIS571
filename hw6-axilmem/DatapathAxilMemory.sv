@@ -79,7 +79,6 @@ module RegFile (
 
 endmodule
 
-
 /***************************/
 /* FROM PIPELINED DATAPATH */
 /***************************/
@@ -122,16 +121,245 @@ typedef struct packed {
 } stage_decode_t;
 
 
-module DatapathPipelined (
+/***************************/
+/* END PIPELINED DATAPATH */
+/***************************/
+
+
+/** NB: ARESETn is active-low, i.e., reset when this input is ZERO */
+interface axi_clkrst_if (
+    input wire ACLK,
+    input wire ARESETn
+);
+endinterface
+
+interface axi_if #(
+      parameter int ADDR_WIDTH = 32
+    , parameter int DATA_WIDTH = 32
+);
+  logic                      ARVALID;
+  logic                      ARREADY;
+  logic [    ADDR_WIDTH-1:0] ARADDR;
+  logic [               2:0] ARPROT;
+
+  logic                      RVALID;
+  logic                      RREADY;
+  logic [    DATA_WIDTH-1:0] RDATA;
+  logic [               1:0] RRESP;
+
+  logic                      AWVALID;
+  logic                      AWREADY;
+  logic [    ADDR_WIDTH-1:0] AWADDR;
+  logic [               2:0] AWPROT;
+
+  logic                      WVALID;
+  logic                      WREADY;
+  logic [    DATA_WIDTH-1:0] WDATA;
+  logic [(DATA_WIDTH/8)-1:0] WSTRB;
+
+  logic                      BVALID;
+  logic                      BREADY;
+  logic [               1:0] BRESP;
+
+  modport manager(
+      input ARREADY, RVALID, RDATA, RRESP, AWREADY, WREADY, BVALID, BRESP,
+      output ARVALID, ARADDR, ARPROT, RREADY, AWVALID, AWADDR, AWPROT, WVALID, WDATA, WSTRB, BREADY
+  );
+  modport subord(
+      input ARVALID, ARADDR, ARPROT, RREADY, AWVALID, AWADDR, AWPROT, WVALID, WDATA, WSTRB, BREADY,
+      output ARREADY, RVALID, RDATA, RRESP, AWREADY, WREADY, BVALID, BRESP
+  );
+endinterface
+
+module MemoryAxiLite #(
+    parameter int NUM_WORDS  = 32,
+    // parameter int ADDR_WIDTH = 32,
+    parameter int DATA_WIDTH = 32
+) (
+    axi_clkrst_if axi,
+    axi_if.subord insn,
+    axi_if.subord data
+);
+
+  // // memory is an array of 4B words
+  logic [DATA_WIDTH-1:0] mem_array[NUM_WORDS];
+  localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
+  localparam int AddrLsb = 2;
+
+  // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
+  localparam bit [1:0] ResponseOkay = 2'b00;
+  // localparam bit [1:0] ResponseSubordinateError = 2'b10;
+  // localparam bit [1:0] ResponseDecodeError = 2'b11;
+
+`ifndef FORMAL
+  always_comb begin
+    // memory addresses should always be 4B-aligned
+    assert (!insn.ARVALID || insn.ARADDR[1:0] == 2'b00);
+    assert (!data.ARVALID || data.ARADDR[1:0] == 2'b00);
+    assert (!data.AWVALID || data.AWADDR[1:0] == 2'b00);
+    // we don't use the protection bits
+    assert (insn.ARPROT == 3'd0);
+    assert (data.ARPROT == 3'd0);
+    assert (data.AWPROT == 3'd0);
+  end
+`endif
+
+  // TODO: changes will be needed throughout this module
+
+  always_ff @(posedge axi.ACLK) begin
+    if (!axi.ARESETn) begin
+      // start out ready to accept incoming reads
+      insn.ARREADY <= 1;
+      data.ARREADY <= 1;
+      // start out ready to accept an incoming write
+      data.AWREADY <= 1;
+      data.WREADY <= 1;
+    end else begin
+      
+      if(insn.WVALID && insn.AWVALID) begin
+        mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA;
+        insn.BVALID <= 1'b1;
+        insn.BRESP <= ResponseOkay;
+      end
+      if(insn.RREADY && insn.ARREADY) begin
+        insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
+        insn.RVALID <= 1'b1;
+      end
+
+      if(data.WVALID && data.AWVALID) begin
+        mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
+        data.BVALID <= 1'b1;
+        data.BRESP <= ResponseOkay;
+      end
+      if(data.ARVALID) begin
+        data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
+        data.RVALID <= 1'b1;
+      end
+
+    end
+  end
+
+endmodule
+
+/** This is used for testing MemoryAxiLite in simulation, since Verilator doesn't allow
+SV interfaces in top-level modules. We expose all of the AXIL signals here so that tests
+can interact with them. */
+module MemAxiLiteTester #(
+    parameter int NUM_WORDS  = 32,
+    parameter int ADDR_WIDTH = 32,
+    parameter int DATA_WIDTH = 32
+) (
+    input wire ACLK,
+    input wire ARESETn,
+
+    input  wire                   I_ARVALID,
+    output logic                  I_ARREADY,
+    input  wire  [ADDR_WIDTH-1:0] I_ARADDR,
+    input  wire  [           2:0] I_ARPROT,
+    output logic                  I_RVALID,
+    input  wire                   I_RREADY,
+    output logic [ADDR_WIDTH-1:0] I_RDATA,
+    output logic [           1:0] I_RRESP,
+
+    input  wire                       I_AWVALID,
+    output logic                      I_AWREADY,
+    input  wire  [    ADDR_WIDTH-1:0] I_AWADDR,
+    input  wire  [               2:0] I_AWPROT,
+    input  wire                       I_WVALID,
+    output logic                      I_WREADY,
+    input  wire  [    DATA_WIDTH-1:0] I_WDATA,
+    input  wire  [(DATA_WIDTH/8)-1:0] I_WSTRB,
+    output logic                      I_BVALID,
+    input  wire                       I_BREADY,
+    output logic [               1:0] I_BRESP,
+
+    input  wire                   D_ARVALID,
+    output logic                  D_ARREADY,
+    input  wire  [ADDR_WIDTH-1:0] D_ARADDR,
+    input  wire  [           2:0] D_ARPROT,
+    output logic                  D_RVALID,
+    input  wire                   D_RREADY,
+    output logic [ADDR_WIDTH-1:0] D_RDATA,
+    output logic [           1:0] D_RRESP,
+
+    input  wire                       D_AWVALID,
+    output logic                      D_AWREADY,
+    input  wire  [    ADDR_WIDTH-1:0] D_AWADDR,
+    input  wire  [               2:0] D_AWPROT,
+    input  wire                       D_WVALID,
+    output logic                      D_WREADY,
+    input  wire  [    DATA_WIDTH-1:0] D_WDATA,
+    input  wire  [(DATA_WIDTH/8)-1:0] D_WSTRB,
+    output logic                      D_BVALID,
+    input  wire                       D_BREADY,
+    output logic [               1:0] D_BRESP
+);
+
+  axi_clkrst_if axi (.*);
+  axi_if #(
+      .ADDR_WIDTH(ADDR_WIDTH),
+      .DATA_WIDTH(DATA_WIDTH)
+  ) insn ();
+  assign insn.manager.ARVALID = I_ARVALID;
+  assign I_ARREADY = insn.manager.ARREADY;
+  assign insn.manager.ARADDR = I_ARADDR;
+  assign insn.manager.ARPROT = I_ARPROT;
+  assign I_RVALID = insn.manager.RVALID;
+  assign insn.manager.RREADY = I_RREADY;
+  assign I_RRESP = insn.manager.RRESP;
+  assign I_RDATA = insn.manager.RDATA;
+
+  axi_if #(
+      .ADDR_WIDTH(ADDR_WIDTH),
+      .DATA_WIDTH(DATA_WIDTH)
+  ) data ();
+  assign data.manager.ARVALID = D_ARVALID;
+  assign D_ARREADY = data.manager.ARREADY;
+  assign data.manager.ARADDR = D_ARADDR;
+  assign data.manager.ARPROT = D_ARPROT;
+  assign D_RVALID = data.manager.RVALID;
+  assign data.manager.RREADY = D_RREADY;
+  assign D_RRESP = data.manager.RRESP;
+  assign D_RDATA = data.manager.RDATA;
+
+  assign data.manager.AWVALID = D_AWVALID;
+  assign D_AWREADY = data.manager.AWREADY;
+  assign data.manager.AWADDR = D_AWADDR;
+  assign data.manager.AWPROT = D_AWPROT;
+  assign data.manager.WVALID = D_WVALID;
+  assign D_WREADY = data.manager.WREADY;
+  assign data.manager.WDATA = D_WDATA;
+  assign data.manager.WSTRB = D_WSTRB;
+  assign D_BVALID = data.manager.BVALID;
+  assign data.manager.BREADY = D_BREADY;
+  assign D_BRESP = data.manager.BRESP;
+
+  MemoryAxiLite #(
+      .NUM_WORDS(NUM_WORDS)
+  ) mem (
+      .axi (axi),
+      .insn(insn.subord),
+      .data(data.subord)
+  );
+endmodule
+
+module DatapathAxilMemory (
     input wire clk,
     input wire rst,
-    output logic [`REG_SIZE] pc_to_imem,
-    input wire [`INSN_SIZE] insn_from_imem,
-    // dmem is read/write
+
+    // Start by replacing this interface to imem...
+    // output logic [`REG_SIZE] pc_to_imem,
+    // input wire [`INSN_SIZE] insn_from_imem,
+    // ...with this AXIL one.
+    axi_if.manager imem,
+
+    // Once imem is working, replace this interface to dmem...
     output logic [`REG_SIZE] addr_to_dmem,
     input wire [`REG_SIZE] load_data_from_dmem,
     output logic [`REG_SIZE] store_data_to_dmem,
     output logic [3:0] store_we_to_dmem,
+    // // ...with this AXIL one
+    // axi_if.manager dmem,
 
     output logic halt,
 
@@ -233,8 +461,8 @@ module DatapathPipelined (
     end
   end
   // send PC to imem
-  assign pc_to_imem = f_pc_current;
-  assign f_insn = flush ? 32'h0 : insn_from_imem;
+  assign imem.ARADDR = f_pc_current;
+  assign f_insn = flush ? 32'h0 : imem.RDATA;
 
   logic fence;
 
@@ -1229,259 +1457,8 @@ module DatapathPipelined (
   assign trace_writeback_insn = writeback_state.insn;
   assign trace_writeback_cycle_status = writeback_state.cycle_status;
 
-  // TODO: your code here, though you will also need to modify some of the code above
-  // TODO: the testbench requires that your register file instance is named `rf`
-
-endmodule
-/***************************/
-/* END PIPELINED DATAPATH */
-/***************************/
 
 
-/** NB: ARESETn is active-low, i.e., reset when this input is ZERO */
-interface axi_clkrst_if (
-    input wire ACLK,
-    input wire ARESETn
-);
-endinterface
-
-interface axi_if #(
-      parameter int ADDR_WIDTH = 32
-    , parameter int DATA_WIDTH = 32
-);
-  logic                      ARVALID;
-  logic                      ARREADY;
-  logic [    ADDR_WIDTH-1:0] ARADDR;
-  logic [               2:0] ARPROT;
-
-  logic                      RVALID;
-  logic                      RREADY;
-  logic [    DATA_WIDTH-1:0] RDATA;
-  logic [               1:0] RRESP;
-
-  logic                      AWVALID;
-  logic                      AWREADY;
-  logic [    ADDR_WIDTH-1:0] AWADDR;
-  logic [               2:0] AWPROT;
-
-  logic                      WVALID;
-  logic                      WREADY;
-  logic [    DATA_WIDTH-1:0] WDATA;
-  logic [(DATA_WIDTH/8)-1:0] WSTRB;
-
-  logic                      BVALID;
-  logic                      BREADY;
-  logic [               1:0] BRESP;
-
-  modport manager(
-      input ARREADY, RVALID, RDATA, RRESP, AWREADY, WREADY, BVALID, BRESP,
-      output ARVALID, ARADDR, ARPROT, RREADY, AWVALID, AWADDR, AWPROT, WVALID, WDATA, WSTRB, BREADY
-  );
-  modport subord(
-      input ARVALID, ARADDR, ARPROT, RREADY, AWVALID, AWADDR, AWPROT, WVALID, WDATA, WSTRB, BREADY,
-      output ARREADY, RVALID, RDATA, RRESP, AWREADY, WREADY, BVALID, BRESP
-  );
-endinterface
-
-module MemoryAxiLite #(
-    parameter int NUM_WORDS  = 32,
-    // parameter int ADDR_WIDTH = 32,
-    parameter int DATA_WIDTH = 32
-) (
-    axi_clkrst_if axi,
-    axi_if.subord insn,
-    axi_if.subord data
-);
-
-  // // memory is an array of 4B words
-  logic [DATA_WIDTH-1:0] mem_array[NUM_WORDS];
-  localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
-  localparam int AddrLsb = 2;
-
-  // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
-  localparam bit [1:0] ResponseOkay = 2'b00;
-  // localparam bit [1:0] ResponseSubordinateError = 2'b10;
-  // localparam bit [1:0] ResponseDecodeError = 2'b11;
-
-`ifndef FORMAL
-  always_comb begin
-    // memory addresses should always be 4B-aligned
-    assert (!insn.ARVALID || insn.ARADDR[1:0] == 2'b00);
-    assert (!data.ARVALID || data.ARADDR[1:0] == 2'b00);
-    assert (!data.AWVALID || data.AWADDR[1:0] == 2'b00);
-    // we don't use the protection bits
-    assert (insn.ARPROT == 3'd0);
-    assert (data.ARPROT == 3'd0);
-    assert (data.AWPROT == 3'd0);
-  end
-`endif
-
-  // TODO: changes will be needed throughout this module
-
-  always_ff @(posedge axi.ACLK) begin
-    if (!axi.ARESETn) begin
-      // start out ready to accept incoming reads
-      insn.ARREADY <= 1;
-      data.ARREADY <= 1;
-      // start out ready to accept an incoming write
-      data.AWREADY <= 1;
-      data.WREADY <= 1;
-    end else begin
-      
-      if(insn.WVALID && insn.AWVALID) begin
-        mem_array[insn.AWADDR[AddrMsb:AddrLsb]] <= insn.WDATA;
-        insn.BVALID <= 1'b1;
-        insn.BRESP <= ResponseOkay;
-      end
-      if(insn.RREADY && insn.ARREADY) begin
-        insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
-        insn.RVALID <= 1'b1;
-      end
-
-      if(data.WVALID && data.AWVALID) begin
-        mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
-        data.BVALID <= 1'b1;
-        data.BRESP <= ResponseOkay;
-      end
-      if(data.ARVALID) begin
-        data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
-        data.RVALID <= 1'b1;
-      end
-
-    end
-  end
-
-endmodule
-
-/** This is used for testing MemoryAxiLite in simulation, since Verilator doesn't allow
-SV interfaces in top-level modules. We expose all of the AXIL signals here so that tests
-can interact with them. */
-module MemAxiLiteTester #(
-    parameter int NUM_WORDS  = 32,
-    parameter int ADDR_WIDTH = 32,
-    parameter int DATA_WIDTH = 32
-) (
-    input wire ACLK,
-    input wire ARESETn,
-
-    input  wire                   I_ARVALID,
-    output logic                  I_ARREADY,
-    input  wire  [ADDR_WIDTH-1:0] I_ARADDR,
-    input  wire  [           2:0] I_ARPROT,
-    output logic                  I_RVALID,
-    input  wire                   I_RREADY,
-    output logic [ADDR_WIDTH-1:0] I_RDATA,
-    output logic [           1:0] I_RRESP,
-
-    input  wire                       I_AWVALID,
-    output logic                      I_AWREADY,
-    input  wire  [    ADDR_WIDTH-1:0] I_AWADDR,
-    input  wire  [               2:0] I_AWPROT,
-    input  wire                       I_WVALID,
-    output logic                      I_WREADY,
-    input  wire  [    DATA_WIDTH-1:0] I_WDATA,
-    input  wire  [(DATA_WIDTH/8)-1:0] I_WSTRB,
-    output logic                      I_BVALID,
-    input  wire                       I_BREADY,
-    output logic [               1:0] I_BRESP,
-
-    input  wire                   D_ARVALID,
-    output logic                  D_ARREADY,
-    input  wire  [ADDR_WIDTH-1:0] D_ARADDR,
-    input  wire  [           2:0] D_ARPROT,
-    output logic                  D_RVALID,
-    input  wire                   D_RREADY,
-    output logic [ADDR_WIDTH-1:0] D_RDATA,
-    output logic [           1:0] D_RRESP,
-
-    input  wire                       D_AWVALID,
-    output logic                      D_AWREADY,
-    input  wire  [    ADDR_WIDTH-1:0] D_AWADDR,
-    input  wire  [               2:0] D_AWPROT,
-    input  wire                       D_WVALID,
-    output logic                      D_WREADY,
-    input  wire  [    DATA_WIDTH-1:0] D_WDATA,
-    input  wire  [(DATA_WIDTH/8)-1:0] D_WSTRB,
-    output logic                      D_BVALID,
-    input  wire                       D_BREADY,
-    output logic [               1:0] D_BRESP
-);
-
-  axi_clkrst_if axi (.*);
-  axi_if #(
-      .ADDR_WIDTH(ADDR_WIDTH),
-      .DATA_WIDTH(DATA_WIDTH)
-  ) insn ();
-  assign insn.manager.ARVALID = I_ARVALID;
-  assign I_ARREADY = insn.manager.ARREADY;
-  assign insn.manager.ARADDR = I_ARADDR;
-  assign insn.manager.ARPROT = I_ARPROT;
-  assign I_RVALID = insn.manager.RVALID;
-  assign insn.manager.RREADY = I_RREADY;
-  assign I_RRESP = insn.manager.RRESP;
-  assign I_RDATA = insn.manager.RDATA;
-
-  axi_if #(
-      .ADDR_WIDTH(ADDR_WIDTH),
-      .DATA_WIDTH(DATA_WIDTH)
-  ) data ();
-  assign data.manager.ARVALID = D_ARVALID;
-  assign D_ARREADY = data.manager.ARREADY;
-  assign data.manager.ARADDR = D_ARADDR;
-  assign data.manager.ARPROT = D_ARPROT;
-  assign D_RVALID = data.manager.RVALID;
-  assign data.manager.RREADY = D_RREADY;
-  assign D_RRESP = data.manager.RRESP;
-  assign D_RDATA = data.manager.RDATA;
-
-  assign data.manager.AWVALID = D_AWVALID;
-  assign D_AWREADY = data.manager.AWREADY;
-  assign data.manager.AWADDR = D_AWADDR;
-  assign data.manager.AWPROT = D_AWPROT;
-  assign data.manager.WVALID = D_WVALID;
-  assign D_WREADY = data.manager.WREADY;
-  assign data.manager.WDATA = D_WDATA;
-  assign data.manager.WSTRB = D_WSTRB;
-  assign D_BVALID = data.manager.BVALID;
-  assign data.manager.BREADY = D_BREADY;
-  assign D_BRESP = data.manager.BRESP;
-
-  MemoryAxiLite #(
-      .NUM_WORDS(NUM_WORDS)
-  ) mem (
-      .axi (axi),
-      .insn(insn.subord),
-      .data(data.subord)
-  );
-endmodule
-
-module DatapathAxilMemory (
-    input wire clk,
-    input wire rst,
-
-    // Start by replacing this interface to imem...
-    // output logic [`REG_SIZE] pc_to_imem,
-    // input wire [`INSN_SIZE] insn_from_imem,
-    // ...with this AXIL one.
-    axi_if.manager imem,
-
-    // Once imem is working, replace this interface to dmem...
-    // output logic [`REG_SIZE] addr_to_dmem,
-    // input wire [`REG_SIZE] load_data_from_dmem,
-    // output logic [`REG_SIZE] store_data_to_dmem,
-    // output logic [3:0] store_we_to_dmem,
-    // ...with this AXIL one
-    axi_if.manager dmem,
-
-    output logic halt,
-
-    // The PC of the insn currently in Writeback. 0 if not a valid insn.
-    output logic [`REG_SIZE] trace_writeback_pc,
-    // The bits of the insn currently in Writeback. 0 if not a valid insn.
-    output logic [`INSN_SIZE] trace_writeback_insn,
-    // The status of the insn (or stall) currently in Writeback. See cycle_status_e enum for valid values.
-    output cycle_status_e trace_writeback_cycle_status
-);
 
   // TODO: your code here
 
@@ -1590,7 +1567,15 @@ module RiscvProcessor (
       .clk(clk),
       .rst(rst),
       .imem(axi_insn.manager),
-      .dmem(axi_data.manager),
+      // .dmem(axi_data.manager),
+
+      // change these interfaces to .dmem once alu and branches are implemented
+      .addr_to_dmem       (mem_data_addr),
+      .load_data_from_dmem(mem_data_loaded_value),
+      .store_data_to_dmem (mem_data_to_write),
+      .store_we_to_dmem   (mem_data_we),
+      //
+
       .halt(halt),
       .trace_writeback_pc(trace_writeback_pc),
       .trace_writeback_insn(trace_writeback_insn),
