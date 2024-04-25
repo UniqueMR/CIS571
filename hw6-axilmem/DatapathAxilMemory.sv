@@ -489,7 +489,7 @@ module DatapathAxilMemory (
   end
   // send PC to imem
   assign imem.ARADDR = f_pc_current;
-  assign f_insn = flush ? 32'h0 : imem.RDATA;
+  assign f_insn = (flush || flush_next) ? 32'b0 : imem.RDATA;
   assign imem.ARVALID = f_insn_addr_read_valid;
   assign imem.RREADY = f_insn_read_ready;
 
@@ -543,11 +543,12 @@ module DatapathAxilMemory (
         cycle_status: CYCLE_RESET
       };
     end
+
     else begin
       decode_state = '{
         pc: f_pc_current,
         insn: f_insn,
-        cycle_status: f_cycle_status
+        cycle_status: (flush || flush_next) ? CYCLE_TAKEN_BRANCH : f_cycle_status
       };
     end
   end
@@ -701,7 +702,17 @@ module DatapathAxilMemory (
 
   // handle flush caused by branch insns
   logic flush;
+  logic flush_next;
   logic [`REG_SIZE] jump_to_pc;
+
+  always_ff @(posedge clk)  begin
+    if(flush) begin
+      flush_next <= 1'b1;
+    end
+    else  begin
+      flush_next <= 1'b0;
+    end
+  end
 
   //handle mem offset
   logic [31:0] mem_addr_raw;
