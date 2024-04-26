@@ -535,6 +535,8 @@ module DatapathAxilMemory (
   //   end
   // end
 
+  logic [31:0] d_pc;
+
   always_comb begin
     if (rst) begin
       decode_state = '{
@@ -550,6 +552,15 @@ module DatapathAxilMemory (
         insn: f_insn,
         cycle_status: (flush || flush_next) ? CYCLE_TAKEN_BRANCH : f_cycle_status
       };
+    end
+  end
+
+  always_ff @(posedge clk)  begin
+    if(rst) begin
+      d_pc <= 32'b0;
+    end
+    else  begin
+      d_pc <= f_pc_current;
     end
   end
 
@@ -643,7 +654,7 @@ module DatapathAxilMemory (
 
     else begin
       execute_state <= '{
-        pc: flush ? 32'h0 : decode_state.pc,
+        pc: flush ? 32'h0 : d_pc,
         insn: flush ? 32'h0 : decode_state.insn,
         insn_opcode: flush ? 7'h0 : insn_opcode,
         insn_rd: flush ? 5'h0 : insn_rd,

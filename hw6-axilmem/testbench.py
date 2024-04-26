@@ -542,3 +542,8 @@ async def dhrystone(dut, tracingMode=TRACING_MODE):
             return
         pass
     raise SimTimeoutError()
+
+@cocotb.test()
+async def testOneRiscvTest(dut):
+    "Use this to run one particular riscv test"
+    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-beq')
