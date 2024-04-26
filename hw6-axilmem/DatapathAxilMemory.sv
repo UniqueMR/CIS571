@@ -215,6 +215,9 @@ module MemoryAxiLite #(
       // start out ready to accept an incoming write
       data.AWREADY <= 1;
       data.WREADY <= 1;
+
+      insn.RDATA <= 32'b0;
+
     end else begin
       
       if(insn.WVALID && insn.AWVALID) begin
@@ -536,13 +539,14 @@ module DatapathAxilMemory (
   // end
 
   logic [31:0] d_pc;
+  cycle_status_e d_cycle_status;
 
   always_comb begin
-    if (rst) begin
+    if (rst || flush || flush_next) begin
       decode_state = '{
         pc: 0,
         insn: 0,
-        cycle_status: CYCLE_RESET
+        cycle_status: (flush || flush_next) ? CYCLE_TAKEN_BRANCH : CYCLE_RESET
       };
     end
 
@@ -550,7 +554,7 @@ module DatapathAxilMemory (
       decode_state = '{
         pc: f_pc_current,
         insn: f_insn,
-        cycle_status: (flush || flush_next) ? CYCLE_TAKEN_BRANCH : f_cycle_status
+        cycle_status: f_cycle_status
       };
     end
   end
@@ -558,9 +562,11 @@ module DatapathAxilMemory (
   always_ff @(posedge clk)  begin
     if(rst) begin
       d_pc <= 32'b0;
+      d_cycle_status <= CYCLE_RESET;
     end
     else  begin
       d_pc <= f_pc_current;
+      d_cycle_status <= f_cycle_status;
     end
   end
 
@@ -664,7 +670,7 @@ module DatapathAxilMemory (
         data_rs1: (wd_bypass_rs1) ? writeback_state.data_rd : regfile_rs1_data,
         data_rs2: (wd_bypass_rs2) ? writeback_state.data_rd : regfile_rs2_data,
         insn_funct7: flush ? 7'h0 : insn_funct7,
-        cycle_status: flush ? CYCLE_TAKEN_BRANCH : decode_state.cycle_status
+        cycle_status: flush ? CYCLE_TAKEN_BRANCH : d_cycle_status
       };
     end
   end
@@ -1522,13 +1528,9 @@ module DatapathAxilMemory (
   assign wm_bypass_data = (writeback_state.insn_rd == memory_state.reg_addr_to_st && w_rd_make_sense && m_rs2_make_sense);
   // assign wm_bypass_addr = ();
 
-  assign trace_writeback_pc = writeback_state.pc;
+  assign trace_writeback_pc = (writeback_state.cycle_status != CYCLE_NO_STALL) ? 32'h0 : writeback_state.pc;
   assign trace_writeback_insn = writeback_state.insn;
   assign trace_writeback_cycle_status = writeback_state.cycle_status;
-
-
-
-
   // TODO: your code here
 
 endmodule
