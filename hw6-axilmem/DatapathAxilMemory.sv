@@ -374,13 +374,13 @@ module DatapathAxilMemory (
     // ...with this AXIL one.
     axi_if.manager imem,
 
-    // Once imem is working, replace this interface to dmem...
-    output logic [`REG_SIZE] addr_to_dmem,
-    input wire [`REG_SIZE] load_data_from_dmem,
-    output logic [`REG_SIZE] store_data_to_dmem,
-    output logic [3:0] store_we_to_dmem,
-    // // ...with this AXIL one
-    // axi_if.manager dmem,
+    // // Once imem is working, replace this interface to dmem...
+    // output logic [`REG_SIZE] addr_to_dmem,
+    // input wire [`REG_SIZE] load_data_from_dmem,
+    // output logic [`REG_SIZE] store_data_to_dmem,
+    // output logic [3:0] store_we_to_dmem,
+    // ...with this AXIL one
+    axi_if.manager dmem,
 
     output logic halt,
 
@@ -626,6 +626,9 @@ module DatapathAxilMemory (
 
   stage_execute_t execute_state;
 
+  wire e_stall;
+  assign e_stall = div_stall_next || load_stall_next || ((mx_bypass_rs1 || mx_bypass_rs2) & memory_state.insn_opcode == OpcodeLoad);
+
   always_ff @(posedge clk) begin
     if (rst || fence) begin
       execute_state <= '{
@@ -642,7 +645,7 @@ module DatapathAxilMemory (
         cycle_status: (rst) ? CYCLE_RESET : CYCLE_FENCEI
       };
     end 
-    else if(div_stall_next || load_stall_next) begin
+    else if(e_stall) begin
       execute_state <= '{
         pc: execute_state.pc,
         insn: execute_state.insn,
@@ -736,12 +739,36 @@ module DatapathAxilMemory (
   logic [31:0] mem_addr_base;
   logic [1:0] mem_addr_offset;
 
+  logic w_m_x_bypass_rs1;
+  logic w_m_x_bypass_rs2;
+  
+  always_ff @(posedge clk)  begin
+    if(e_stall && mx_bypass_rs1) begin
+      w_m_x_bypass_rs1 <= 1'b1;
+    end
+    else  begin
+      w_m_x_bypass_rs1 <= 1'b0;
+    end
+  end
+
+  always_ff @(posedge clk)  begin
+    if(e_stall && mx_bypass_rs2) begin
+      w_m_x_bypass_rs2 <= 1'b1;
+    end
+    else  begin
+      w_m_x_bypass_rs2 <= 1'b0;
+    end
+  end
+
   always_comb begin
     if(mx_bypass_rs1) begin
       alu_data_rs1 = memory_state.data_rd;
     end
     else if(wx_bypass_rs1)  begin
-      alu_data_rs1 = writeback_state.data_rd;
+      alu_data_rs1 = (w_m_x_bypass_rs1) ? m_data_to_reg : writeback_state.data_rd;
+    end
+    else if(w_m_x_bypass_rs1) begin
+      alu_data_rs1 = m_data_to_reg;
     end
     else  begin
       alu_data_rs1 = execute_state.data_rs1;
@@ -753,7 +780,10 @@ module DatapathAxilMemory (
       alu_data_rs2 = memory_state.data_rd;
     end
     else if(wx_bypass_rs2)  begin
-      alu_data_rs2 = writeback_state.data_rd;
+      alu_data_rs2 = (w_m_x_bypass_rs2) ? m_data_to_reg : writeback_state.data_rd;
+    end
+    else if(w_m_x_bypass_rs2) begin
+      alu_data_rs2 = m_data_to_reg;
     end
     else  begin
       alu_data_rs2 = execute_state.data_rs2;
@@ -1209,7 +1239,7 @@ module DatapathAxilMemory (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(div_stall_curr || div_stall_next || load_stall_next)  begin
+    else if(e_stall)  begin
       memory_state <= '{
         pc: 0,
         insn: 0,
@@ -1243,52 +1273,120 @@ module DatapathAxilMemory (
     end
   end
 
-  assign addr_to_dmem = memory_state.mem_addr_base;
+  assign dmem.ARADDR = memory_state.mem_addr_base;
 
   logic [31:0] m_data_to_reg;
   logic [31:0] m_data_to_dmem;
   logic [3:0] m_st_we_to_dmem;
-  logic m_illegal_insn;
+  logic w_illegal_insn;
 
-  assign store_data_to_dmem = m_data_to_dmem;
-  assign store_we_to_dmem = m_st_we_to_dmem;
+  assign dmem.WDATA = m_data_to_dmem;
+  assign dmem.WVALID = (m_st_we_to_dmem == 4'b0) ? 1'b0 : 1'b1;
+  assign dmem.AWVALID = (m_st_we_to_dmem == 4'b0) ? 1'b0 : 1'b1;
 
-  always_comb begin
-    m_illegal_insn = 1'b0;
-    m_data_to_dmem = 32'h0;
-    m_st_we_to_dmem = 4'h0;
+  assign  dmem.ARVALID = 1'b1;
+  assign  dmem.RREADY = (memory_state.insn_opcode == OpcodeLoad) ? 1'b1 : 1'b0;
 
-    if(memory_state.insn_opcode == OpcodeLoad)  begin
-      if(execute_state.insn_opcode != OpcodeStore)  begin
-        if(memory_state.insn_rd == execute_state.insn_rs1 && x_rs1_make_sense)  begin
-          load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
-        end
-        else if(memory_state.insn_rd == execute_state.insn_rs2 && x_rs2_make_sense) begin
-          load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
-        end
-        else begin
-          load_stall_next = 1'b0;
-        end
-      end
-      else  begin
-        if(memory_state.insn_rd == execute_state.insn_rs1 && x_rs1_make_sense)  begin
-          load_stall_next = (load_stall_curr == 1'b0) ? 1'b1 : 1'b0;
-        end
-        else  begin
-          load_stall_next = 1'b0;
-        end
-      end
+  wire [255:0] m_disasm;
+  Disasm #(
+      .PREFIX("M")
+  ) disasm_3memory (
+      .insn  (memory_state.insn),
+      .disasm(m_disasm)
+  );
+
+  /********************/
+  /* WRITE_BACK STAGE */
+  /********************/
+
+  typedef struct packed {
+  logic [`REG_SIZE] pc;
+  logic [`INSN_SIZE] insn;
+  logic [6:0] insn_opcode;
+  logic [4:0] insn_rd;
+  logic [31:0] data_rd;
+  logic [1:0] mem_addr_offset;
+  logic [2:0] insn_funct3;
+  logic illegal_insn;
+  cycle_status_e cycle_status;
+  } stage_writeback_t;
+
+  stage_writeback_t writeback_state;
+
+  always_ff @(posedge clk)  begin
+    if(rst) begin
+      writeback_state <= '{
+        pc: 0,
+        insn: 0,
+        insn_opcode: 0,
+        insn_rd: 0,
+        data_rd: 0,
+        mem_addr_offset: 0,
+        insn_funct3: 0,
+        illegal_insn: 0,
+        cycle_status: CYCLE_RESET
+      };
+    end
+    else if(div_stall_curr) begin
+      writeback_state <= '{
+        pc: execute_state.pc,
+        insn: execute_state.insn,
+        insn_opcode: execute_state.insn_opcode,
+        insn_rd: execute_state.insn_rd,
+        data_rd: res_alu,
+        mem_addr_offset: mem_addr_offset,
+        insn_funct3: execute_state.insn_funct3,
+        illegal_insn: illegal_insn,
+        cycle_status: execute_state.cycle_status
+      };
     end
     else  begin
-      load_stall_next = 1'b0;
+      writeback_state <= '{
+        pc: memory_state.pc,
+        insn: memory_state.insn,
+        insn_opcode: memory_state.insn_opcode,
+        insn_rd: memory_state.insn_rd,
+        data_rd: memory_state.data_rd,
+        mem_addr_offset: memory_state.mem_addr_offset,
+        insn_funct3: memory_state.insn_funct3,
+        illegal_insn: memory_state.illegal_insn,
+        cycle_status: memory_state.cycle_status
+      };
     end
+  end
 
-    case(memory_state.insn_opcode)
+  assign regfile_we = (writeback_state.insn == 32'h0 || writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH || writeback_state.insn_opcode == OpcodeStore || writeback_state.insn_opcode == OpcodeBranch || writeback_state.insn_opcode == OpcodeMiscMem || writeback_state.insn_opcode == OpcodeEnviron) ? 1'b0 : 1'b1;
+  assign regfile_rd = writeback_state.insn_rd;
+  assign regfile_rd_data = (writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd;
+
+  always_comb begin
+    case(writeback_state.insn_opcode)  
+      OpcodeEnviron:  begin
+        if(writeback_state.insn[31:7] == 25'd0) begin
+          halt = 1'b1;
+        end
+        else  begin
+          halt = 1'b0;
+        end
+      end
+      default:  begin
+        halt = 1'b0;
+      end
+    endcase
+  end
+
+  wire [31:0] load_data_from_dmem;
+  assign load_data_from_dmem = dmem.RDATA;
+
+  always_comb begin
+    w_illegal_insn = 1'b0;
+
+    case(writeback_state.insn_opcode)
       OpcodeLoad: begin
-        case(memory_state.insn_funct3)
+        case(writeback_state.insn_funct3)
           //lb
           3'b000: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00:  m_data_to_reg = {{24{load_data_from_dmem[7]}}, {load_data_from_dmem[7:0]}};
               2'b01:  m_data_to_reg = {{24{load_data_from_dmem[15]}}, {load_data_from_dmem[15:8]}};
               2'b10:  m_data_to_reg = {{24{load_data_from_dmem[23]}}, {load_data_from_dmem[23:16]}};
@@ -1298,16 +1396,16 @@ module DatapathAxilMemory (
 
           // lh
           3'b001: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00: m_data_to_reg = {{16{load_data_from_dmem[15]}}, {load_data_from_dmem[15:0]}};
               2'b10: m_data_to_reg = {{16{load_data_from_dmem[31]}}, {load_data_from_dmem[31:16]}};
-              default: m_illegal_insn = 1'b1;
+              default: w_illegal_insn = 1'b1;
             endcase
           end
 
           // lbu
           3'b100: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00:  m_data_to_reg = {{24'b0}, {load_data_from_dmem[7:0]}};
               2'b01:  m_data_to_reg = {{24'b0}, {load_data_from_dmem[15:8]}};
               2'b10:  m_data_to_reg = {{24'b0}, {load_data_from_dmem[23:16]}};
@@ -1317,32 +1415,32 @@ module DatapathAxilMemory (
 
           // lhu
           3'b101: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00: m_data_to_reg = {{16'b0}, {load_data_from_dmem[15:0]}};
               2'b10: m_data_to_reg = {{16'b0}, {load_data_from_dmem[31:16]}};
-              default: m_illegal_insn = 1'b1;
+              default: w_illegal_insn = 1'b1;
             endcase
           end
 
           //lw
           3'b010: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00: m_data_to_reg = load_data_from_dmem;
-              default: m_illegal_insn = 1'b1;
+              default: w_illegal_insn = 1'b1;
             endcase
           end
 
           default:  begin
-            m_illegal_insn = 1'b1;
+            w_illegal_insn = 1'b1;
           end
         endcase
       end
 
       OpcodeStore:  begin
-        case(memory_state.insn_funct3)
+        case(writeback_state.insn_funct3)
           // sb
           3'b000: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00: begin
                 m_st_we_to_dmem = 4'b0001;
                 m_data_to_dmem[7:0] = (wm_bypass_data) ? writeback_state.data_rd[7:0] : memory_state.data_to_dmem[7:0];
@@ -1367,7 +1465,7 @@ module DatapathAxilMemory (
 
           // sh
           3'b001: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00:  begin
                 m_st_we_to_dmem = 4'b0011;
                 m_data_to_dmem[15:0] = (wm_bypass_data) ? writeback_state.data_rd[15:0] : memory_state.data_to_dmem[15:0];
@@ -1378,110 +1476,30 @@ module DatapathAxilMemory (
                 m_data_to_dmem[31:16] = (wm_bypass_data) ? writeback_state.data_rd[15:0] : memory_state.data_to_dmem[15:0];
               end
 
-              default:  m_illegal_insn = 1'b1;
+              default:  w_illegal_insn = 1'b1;
             endcase
           end
 
           // sw
           3'b010: begin
-            case(memory_state.mem_addr_offset)
+            case(writeback_state.mem_addr_offset)
               2'b00:  begin
                 m_st_we_to_dmem = 4'b1111;
                 m_data_to_dmem = (wm_bypass_data) ? writeback_state.data_rd : memory_state.data_to_dmem;
               end
 
-              default: m_illegal_insn = 1'b1;
+              default: w_illegal_insn = 1'b1;
             endcase
           end
 
           default:  begin
-            m_illegal_insn = 1'b1;
+            w_illegal_insn = 1'b1;
           end
         endcase
       end
 
       default:  begin
         m_data_to_reg = 32'h0;
-      end
-    endcase
-  end
-
-  wire [255:0] m_disasm;
-  Disasm #(
-      .PREFIX("M")
-  ) disasm_3memory (
-      .insn  (memory_state.insn),
-      .disasm(m_disasm)
-  );
-
-  /********************/
-  /* WRITE_BACK STAGE */
-  /********************/
-
-  typedef struct packed {
-  logic [`REG_SIZE] pc;
-  logic [`INSN_SIZE] insn;
-  logic [6:0] insn_opcode;
-  logic [4:0] insn_rd;
-  logic [31:0] data_rd;
-  logic illegal_insn;
-  cycle_status_e cycle_status;
-  } stage_writeback_t;
-
-  stage_writeback_t writeback_state;
-
-  always_ff @(posedge clk)  begin
-    if(rst) begin
-      writeback_state <= '{
-        pc: 0,
-        insn: 0,
-        insn_opcode: 0,
-        insn_rd: 0,
-        data_rd: 0,
-        illegal_insn: 0,
-        cycle_status: CYCLE_RESET
-      };
-    end
-    else if(div_stall_curr) begin
-      writeback_state <= '{
-        pc: execute_state.pc,
-        insn: execute_state.insn,
-        insn_opcode: execute_state.insn_opcode,
-        insn_rd: execute_state.insn_rd,
-        data_rd: res_alu,
-        illegal_insn: illegal_insn,
-        cycle_status: execute_state.cycle_status
-      };
-    end
-    else  begin
-      writeback_state <= '{
-        pc: memory_state.pc,
-        insn: memory_state.insn,
-        insn_opcode: memory_state.insn_opcode,
-        insn_rd: memory_state.insn_rd,
-        data_rd: (memory_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : memory_state.data_rd,
-        illegal_insn: (m_illegal_insn) ? m_illegal_insn : memory_state.illegal_insn,
-        cycle_status: memory_state.cycle_status
-      };
-    end
-  end
-
-  assign regfile_we = (writeback_state.insn == 32'h0 || writeback_state.insn_opcode == 7'h63 || writeback_state.cycle_status == CYCLE_TAKEN_BRANCH || writeback_state.insn_opcode == OpcodeStore || writeback_state.insn_opcode == OpcodeBranch || writeback_state.insn_opcode == OpcodeMiscMem || writeback_state.insn_opcode == OpcodeEnviron) ? 1'b0 : 1'b1;
-  assign regfile_rd = writeback_state.insn_rd;
-  assign regfile_rd_data = writeback_state.data_rd;
-
-  always_comb begin
-    case(writeback_state.insn_opcode)  
-      OpcodeEnviron:  begin
-        if(writeback_state.insn[31:7] == 25'd0) begin
-          halt = 1'b1;
-        end
-        else  begin
-          halt = 1'b0;
-        end
-      end
-      default:  begin
-        halt = 1'b0;
       end
     endcase
   end
@@ -1641,11 +1659,13 @@ module RiscvProcessor (
       // .dmem(axi_data.manager),
 
       // change these interfaces to .dmem once alu and branches are implemented
-      .addr_to_dmem       (mem_data_addr),
-      .load_data_from_dmem(mem_data_loaded_value),
-      .store_data_to_dmem (mem_data_to_write),
-      .store_we_to_dmem   (mem_data_we),
-      //
+      // .addr_to_dmem       (mem_data_addr),
+      // .load_data_from_dmem(mem_data_loaded_value),
+      // .store_data_to_dmem (mem_data_to_write),
+      // .store_we_to_dmem   (mem_data_we),
+      // use .dmem
+
+      .dmem(axi_data.manager),
 
       .halt(halt),
       .trace_writeback_pc(trace_writeback_pc),
