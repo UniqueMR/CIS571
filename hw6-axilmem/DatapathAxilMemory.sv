@@ -478,7 +478,7 @@ module DatapathAxilMemory (
       div_stall_curr <= 1'b0;
       load_stall_curr <= 1'b0;
     end
-    else if(fence || div_stall_next || load_stall_next)  begin
+    else if(fence || div_stall_next || load_stall_next || x_stall)  begin
       f_pc_current <= f_pc_current;
       div_stall_curr <= div_stall_next;
       load_stall_curr <= load_stall_next;
@@ -490,9 +490,18 @@ module DatapathAxilMemory (
       load_stall_curr <= load_stall_next;
     end
   end
+
+  logic [31:0] f_insn_stall;
+
+  always @(posedge clk)  begin
+    if(div_stall_next || x_stall)  begin
+      f_insn_stall <= f_insn;
+    end
+  end
+
   // send PC to imem
   assign imem.ARADDR = f_pc_current;
-  assign f_insn = (flush || flush_next) ? 32'b0 : imem.RDATA;
+  assign f_insn = (div_stall_curr || x_stall_curr) ? f_insn_stall : ((flush || flush_next) ? 32'b0 : imem.RDATA);
   assign imem.ARVALID = f_insn_addr_read_valid;
   assign imem.RREADY = f_insn_read_ready;
 
@@ -541,12 +550,35 @@ module DatapathAxilMemory (
   logic [31:0] d_pc;
   cycle_status_e d_cycle_status;
 
+  logic fence_curr;
+  logic [31:0] fence_stall_pc;
+  logic [31:0] fence_stall_insn;
+
+  always @(posedge clk) begin
+    if(fence) begin
+      fence_curr <= 1'b1;
+      fence_stall_pc <= f_pc_current;
+      fence_stall_insn <= f_insn;
+    end
+    else  begin
+      fence_curr <= 1'b0;
+    end
+  end
+
   always_comb begin
     if (rst || flush || flush_next) begin
       decode_state = '{
         pc: 0,
         insn: 0,
         cycle_status: (flush || flush_next) ? CYCLE_TAKEN_BRANCH : CYCLE_RESET
+      };
+    end
+
+    else if(fence_curr) begin
+      decode_state = '{
+        pc: fence_stall_pc,
+        insn: fence_stall_insn,
+        cycle_status: CYCLE_FENCEI
       };
     end
 
@@ -627,7 +659,17 @@ module DatapathAxilMemory (
   stage_execute_t execute_state;
 
   wire x_stall;
-  assign x_stall = div_stall_next || load_stall_next || ((mx_bypass_rs1 || mx_bypass_rs2) & memory_state.insn_opcode == OpcodeLoad);
+  assign x_stall = div_stall_next || load_stall_next || ((mx_bypass_rs1 || (mx_bypass_rs2 && execute_state.insn_opcode != OpcodeStore)) & memory_state.insn_opcode == OpcodeLoad);
+  
+  logic x_stall_curr;
+  always_ff @(posedge clk)  begin
+    if(x_stall) begin
+      x_stall_curr <= 1'b1;
+    end
+    else  begin
+      x_stall_curr <= 1'b0;
+    end
+  end
 
   always_ff @(posedge clk) begin
     if (rst || fence) begin
@@ -670,8 +712,8 @@ module DatapathAxilMemory (
         insn_funct3: flush ? 3'h0 : insn_funct3,
         insn_rs1: flush ? 5'h0 : insn_rs1,
         insn_rs2: flush ? 5'h0 : insn_rs2,
-        data_rs1: (wd_bypass_rs1) ? writeback_state.data_rd : regfile_rs1_data,
-        data_rs2: (wd_bypass_rs2) ? writeback_state.data_rd : regfile_rs2_data,
+        data_rs1: (wd_bypass_rs1) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd) : regfile_rs1_data,
+        data_rs2: (wd_bypass_rs2) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd) : regfile_rs2_data,
         insn_funct7: flush ? 7'h0 : insn_funct7,
         cycle_status: flush ? CYCLE_TAKEN_BRANCH : d_cycle_status
       };
@@ -765,7 +807,7 @@ module DatapathAxilMemory (
       alu_data_rs1 = memory_state.data_rd;
     end
     else if(wx_bypass_rs1)  begin
-      alu_data_rs1 = (w_m_x_bypass_rs1) ? m_data_to_reg : writeback_state.data_rd;
+      alu_data_rs1 = (w_m_x_bypass_rs1 || writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd;
     end
     else if(w_m_x_bypass_rs1) begin
       alu_data_rs1 = m_data_to_reg;
@@ -780,7 +822,7 @@ module DatapathAxilMemory (
       alu_data_rs2 = memory_state.data_rd;
     end
     else if(wx_bypass_rs2)  begin
-      alu_data_rs2 = (w_m_x_bypass_rs2) ? m_data_to_reg : writeback_state.data_rd;
+      alu_data_rs2 = (w_m_x_bypass_rs2 || writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd;
     end
     else if(w_m_x_bypass_rs2) begin
       alu_data_rs2 = m_data_to_reg;
@@ -1239,7 +1281,7 @@ module DatapathAxilMemory (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(x_stall)  begin
+    else if(x_stall || x_stall_curr || div_stall_curr || div_stall_next || load_stall_next)  begin
       memory_state <= '{
         pc: 0,
         insn: 0,
@@ -1252,7 +1294,7 @@ module DatapathAxilMemory (
         reg_addr_to_st: 0,
         data_to_dmem: 0,
         illegal_insn: 0,
-        cycle_status: (load_stall_next) ? CYCLE_LOAD2USE : CYCLE_DIV2USE
+        cycle_status: (load_stall_next) ? CYCLE_LOAD2USE : ((div_stall_curr || div_stall_next) ? CYCLE_DIV2USE : CYCLE_INVALID)
       }; 
     end
     else  begin
@@ -1288,6 +1330,21 @@ module DatapathAxilMemory (
   assign  dmem.ARVALID = 1'b1;
   assign  dmem.RREADY = (memory_state.insn_opcode == OpcodeLoad) ? 1'b1 : 1'b0;
 
+  logic load_store_x_stall;
+  logic [31:0] load_store_x_stall_data;
+
+  always @(posedge clk) begin
+    if(writeback_state.insn_opcode == OpcodeLoad && execute_state.insn_opcode == OpcodeStore && writeback_state.insn_rd == execute_state.insn_rs2 && x_stall_curr)  begin
+      load_store_x_stall <= 1'b1;
+      load_store_x_stall_data <= m_data_to_reg;
+    end
+
+    else  begin
+      load_store_x_stall <= 1'b0;
+      load_store_x_stall_data <= 32'b0;
+    end
+  end
+
   always_comb begin
     case(memory_state.insn_opcode)
       OpcodeStore:  begin
@@ -1299,22 +1356,22 @@ module DatapathAxilMemory (
             case(memory_state.mem_addr_offset)
               2'b00: begin
                 m_st_we_to_dmem = 4'b0001;
-                m_data_to_dmem[7:0] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];
+                m_data_to_dmem[7:0] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);
               end
 
               2'b01:  begin
                 m_st_we_to_dmem = 4'b0010;
-                m_data_to_dmem[15:8] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];
+                m_data_to_dmem[15:8] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);
               end
 
               2'b10: begin
                 m_st_we_to_dmem = 4'b0100;
-                m_data_to_dmem[23:16] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];
+                m_data_to_dmem[23:16] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);
               end
 
               2'b11:  begin
                 m_st_we_to_dmem = 4'b1000;
-                m_data_to_dmem[31:24] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];               
+                m_data_to_dmem[31:24] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);               
               end
             endcase
           end
@@ -1324,12 +1381,12 @@ module DatapathAxilMemory (
             case(writeback_state.mem_addr_offset)
               2'b00:  begin
                 m_st_we_to_dmem = 4'b0011;
-                m_data_to_dmem[15:0] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0];
+                m_data_to_dmem[15:0] = (load_store_x_stall) ? load_store_x_stall_data[15:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0]);
               end
 
               2'b10: begin
                 m_st_we_to_dmem = 4'b1100;
-                m_data_to_dmem[31:16] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0];
+                m_data_to_dmem[31:16] = (load_store_x_stall) ? load_store_x_stall_data[15:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0]);
               end
 
               default:  m_illegal_insn = 1'b1;
@@ -1341,7 +1398,7 @@ module DatapathAxilMemory (
             case(writeback_state.mem_addr_offset)
               2'b00:  begin
                 m_st_we_to_dmem = 4'b1111;
-                m_data_to_dmem = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd) : memory_state.data_to_dmem;
+                m_data_to_dmem = (load_store_x_stall) ? load_store_x_stall_data : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd) : memory_state.data_to_dmem);
               end
 
               default: m_illegal_insn = 1'b1;
@@ -1401,7 +1458,7 @@ module DatapathAxilMemory (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(div_stall_curr) begin
+    else if(div_stall_curr || x_stall_curr) begin
       writeback_state <= '{
         pc: execute_state.pc,
         insn: execute_state.insn,
@@ -1512,68 +1569,6 @@ module DatapathAxilMemory (
         endcase
       end
 
-      // OpcodeStore:  begin
-      //   case(writeback_state.insn_funct3)
-      //     // sb
-      //     3'b000: begin
-      //       case(writeback_state.mem_addr_offset)
-      //         2'b00: begin
-      //           m_st_we_to_dmem = 4'b0001;
-      //           m_data_to_dmem[7:0] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];
-      //         end
-
-      //         2'b01:  begin
-      //           m_st_we_to_dmem = 4'b0010;
-      //           m_data_to_dmem[15:8] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];
-      //         end
-
-      //         2'b10: begin
-      //           m_st_we_to_dmem = 4'b0100;
-      //           m_data_to_dmem[23:16] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];
-      //         end
-
-      //         2'b11:  begin
-      //           m_st_we_to_dmem = 4'b1000;
-      //           m_data_to_dmem[31:24] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0];               
-      //         end
-      //       endcase
-      //     end
-
-      //     // sh
-      //     3'b001: begin
-      //       case(writeback_state.mem_addr_offset)
-      //         2'b00:  begin
-      //           m_st_we_to_dmem = 4'b0011;
-      //           m_data_to_dmem[15:0] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0];
-      //         end
-
-      //         2'b10: begin
-      //           m_st_we_to_dmem = 4'b1100;
-      //           m_data_to_dmem[31:16] = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0];
-      //         end
-
-      //         default:  w_illegal_insn = 1'b1;
-      //       endcase
-      //     end
-
-      //     // sw
-      //     3'b010: begin
-      //       case(writeback_state.mem_addr_offset)
-      //         2'b00:  begin
-      //           m_st_we_to_dmem = 4'b1111;
-      //           m_data_to_dmem = (wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd) : memory_state.data_to_dmem;
-      //         end
-
-      //         default: w_illegal_insn = 1'b1;
-      //       endcase
-      //     end
-
-      //     default:  begin
-      //       w_illegal_insn = 1'b1;
-      //     end
-      //   endcase
-      // end
-
       default:  begin
         m_data_to_reg = 32'h0;
       end
@@ -1610,7 +1605,7 @@ module DatapathAxilMemory (
   assign m_rs2_make_sense = memory_state.insn_opcode == OpcodeStore;
   assign w_rd_make_sense = writeback_state.insn_opcode == OpcodeLui || writeback_state.insn_opcode == OpcodeAuipc || writeback_state.insn_opcode == OpcodeRegImm || writeback_state.insn_opcode == OpcodeRegReg || writeback_state.insn_opcode == OpcodeLoad || writeback_state.insn_opcode == OpcodeJal || writeback_state.insn_opcode == OpcodeJalr;
   assign x_rs1_make_sense = execute_state.insn_opcode == OpcodeRegImm || execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch || execute_state.insn_opcode == OpcodeLoad || execute_state.insn_opcode == OpcodeStore || execute_state.insn_opcode == OpcodeJalr;
-  assign x_rs2_make_sense = execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch;
+  assign x_rs2_make_sense = execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch || execute_state.insn_opcode == OpcodeLoad;
   assign d_rs1_make_sense = insn_opcode == OpcodeRegImm || insn_opcode == OpcodeRegReg || insn_opcode == OpcodeBranch || insn_opcode == OpcodeLoad || insn_opcode == OpcodeStore || insn_opcode == OpcodeJalr;
   assign d_rs2_make_sense = insn_opcode == OpcodeRegReg || insn_opcode == OpcodeStore || insn_opcode == OpcodeBranch;
   assign mx_bypass_rs1 = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0 && memory_state.insn_rd != 5'd0 && m_rd_make_sense && x_rs1_make_sense);
