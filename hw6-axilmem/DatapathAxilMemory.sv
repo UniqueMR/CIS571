@@ -1418,6 +1418,16 @@ module DatapathAxilMemory (
     endcase 
   end
 
+  logic [31:0] stored_data_reg [1:0];
+  logic [31:0] stored_addr_reg [1:0];
+  always_ff @(posedge clk)  begin
+    stored_data_reg[0] <= m_data_to_dmem;
+    stored_data_reg[1] <= stored_data_reg[0];
+
+    stored_addr_reg[0] <= memory_state.mem_addr_base;
+    stored_addr_reg[1] <= stored_addr_reg[0];
+  end
+
   wire [255:0] m_disasm;
   Disasm #(
       .PREFIX("M")
@@ -1509,7 +1519,12 @@ module DatapathAxilMemory (
   end
 
   wire [31:0] load_data_from_dmem;
-  assign load_data_from_dmem = dmem.RDATA;
+  assign load_data_from_dmem = (store_load_same_dmem) ? stored_data_reg[1] : dmem.RDATA;
+
+  logic store_load_same_dmem;
+  always_ff @(posedge clk)  begin
+    store_load_same_dmem <= (writeback_state.insn_opcode == OpcodeStore && memory_state.insn_opcode == OpcodeLoad && stored_addr_reg[0] == memory_state.mem_addr_base);
+  end
 
   always_comb begin
     w_illegal_insn = 1'b0;
@@ -1605,7 +1620,7 @@ module DatapathAxilMemory (
   assign m_rs2_make_sense = memory_state.insn_opcode == OpcodeStore;
   assign w_rd_make_sense = writeback_state.insn_opcode == OpcodeLui || writeback_state.insn_opcode == OpcodeAuipc || writeback_state.insn_opcode == OpcodeRegImm || writeback_state.insn_opcode == OpcodeRegReg || writeback_state.insn_opcode == OpcodeLoad || writeback_state.insn_opcode == OpcodeJal || writeback_state.insn_opcode == OpcodeJalr;
   assign x_rs1_make_sense = execute_state.insn_opcode == OpcodeRegImm || execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch || execute_state.insn_opcode == OpcodeLoad || execute_state.insn_opcode == OpcodeStore || execute_state.insn_opcode == OpcodeJalr;
-  assign x_rs2_make_sense = execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch || execute_state.insn_opcode == OpcodeLoad;
+  assign x_rs2_make_sense = execute_state.insn_opcode == OpcodeRegReg || execute_state.insn_opcode == OpcodeBranch || execute_state.insn_opcode == OpcodeLoad || execute_state.insn_opcode == OpcodeStore;
   assign d_rs1_make_sense = insn_opcode == OpcodeRegImm || insn_opcode == OpcodeRegReg || insn_opcode == OpcodeBranch || insn_opcode == OpcodeLoad || insn_opcode == OpcodeStore || insn_opcode == OpcodeJalr;
   assign d_rs2_make_sense = insn_opcode == OpcodeRegReg || insn_opcode == OpcodeStore || insn_opcode == OpcodeBranch;
   assign mx_bypass_rs1 = (execute_state.insn_rs1 == memory_state.insn_rd && illegal_insn == 1'b0 && memory_state.illegal_insn == 1'b0 && memory_state.insn_rd != 5'd0 && m_rd_make_sense && x_rs1_make_sense);

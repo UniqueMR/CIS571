@@ -546,4 +546,4 @@ rvTestFactory.generate_tests()
 @cocotb.test()
 async def testOneRiscvTest(dut):
     "Use this to run one particular riscv test"
-    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-lw')
+    await riscvTest(dut, RISCV_TESTS_PATH / 'rv32ui-p-sw')
