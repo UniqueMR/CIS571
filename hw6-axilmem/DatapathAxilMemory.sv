@@ -626,6 +626,10 @@ module DatapathAxilMemory (
       d_pc <= 32'b0;
       d_cycle_status <= CYCLE_RESET;
     end
+    else if(div_stall_next || x_stall)  begin
+      d_pc <= d_pc;
+      d_cycle_status <= d_cycle_status;
+    end
     else  begin
       d_pc <= f_pc_current;
       d_cycle_status <= f_cycle_status;
@@ -1325,7 +1329,7 @@ module DatapathAxilMemory (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(x_stall || x_stall_curr || div_stall_curr || div_stall_next || load_stall_next)  begin
+    else if(x_stall || (x_stall_curr && execute_state.insn_opcode != OpcodeLoad && execute_state.insn_opcode != OpcodeStore) || div_stall_curr || div_stall_next || load_stall_next)  begin
       memory_state <= '{
         pc: 0,
         insn: 0,
@@ -1516,7 +1520,7 @@ module DatapathAxilMemory (
         cycle_status: CYCLE_RESET
       };
     end
-    else if(div_stall_curr || x_stall_curr) begin
+    else if(div_stall_curr || (x_stall_curr && execute_state.insn_opcode != OpcodeLoad && execute_state.insn_opcode != OpcodeStore)) begin
       writeback_state <= '{
         pc: execute_state.pc,
         insn: execute_state.insn,
@@ -1681,10 +1685,23 @@ module DatapathAxilMemory (
   assign wd_bypass_rs2 = (insn_rs2 == writeback_state.insn_rd && writeback_state.insn_rd != 5'd0 && w_rd_make_sense && d_rs2_make_sense);
   assign wm_bypass_data = (writeback_state.insn_rd == memory_state.reg_addr_to_st && w_rd_make_sense && m_rs2_make_sense);
   // assign wm_bypass_addr = ();
+  logic x_stall_status_handler[1:0];
+  logic [31:0] trace_writeback_insn_handler;
+  logic [31:0] trace_writeback_pc_handler;
+  cycle_status_e trace_writeback_cycle_status_handler;
+  
+  always_ff @(posedge clk)  begin
+    x_stall_status_handler[0] <= x_stall_curr;
+    x_stall_status_handler[1] <= x_stall_status_handler[0];
 
-  assign trace_writeback_pc = (writeback_state.cycle_status != CYCLE_NO_STALL) ? 32'h0 : writeback_state.pc;
-  assign trace_writeback_insn = writeback_state.insn;
-  assign trace_writeback_cycle_status = writeback_state.cycle_status;
+    trace_writeback_pc_handler <= writeback_state.pc;
+    trace_writeback_insn_handler <= writeback_state.insn;
+    trace_writeback_cycle_status_handler <= writeback_state.cycle_status;
+  end
+
+  assign trace_writeback_pc = (trace_writeback_cycle_status != CYCLE_NO_STALL) ? 32'h0 : ((x_stall_status_handler[1]) ? trace_writeback_pc_handler : writeback_state.pc);
+  assign trace_writeback_insn = (x_stall_status_handler[0]) ? 32'h0 : ((x_stall_status_handler[1]) ? trace_writeback_insn_handler : writeback_state.insn);
+  assign trace_writeback_cycle_status = (x_stall_status_handler[0]) ? CYCLE_LOAD2USE : ((x_stall_status_handler[1]) ? trace_writeback_cycle_status_handler : writeback_state.cycle_status);
   // TODO: your code here
 
 endmodule

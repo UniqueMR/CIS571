@@ -503,45 +503,45 @@ if 'RVTEST_ALUBR' in os.environ:
 rvTestFactory.add_option(name='binaryPath', optionlist=RV_TEST_BINARIES)
 rvTestFactory.generate_tests()
 
-# @cocotb.test(skip='RVTEST_ALUBR' in os.environ)
-# async def dhrystone(dut, tracingMode=TRACING_MODE):
-#     "Run dhrystone benchmark from riscv-tests"
-#     dsBinary = RISCV_BENCHMARKS_PATH / 'dhrystone.riscv' 
-#     assert dsBinary.exists(), f'Could not find Dhrystone binary {dsBinary}, have you built riscv-tests?'
-#     loadBinaryIntoMemory(dut, dsBinary)
-#     await preTestSetup(dut)
+@cocotb.test(skip='RVTEST_ALUBR' in os.environ)
+async def dhrystone(dut, tracingMode=TRACING_MODE):
+    "Run dhrystone benchmark from riscv-tests"
+    dsBinary = RISCV_BENCHMARKS_PATH / 'dhrystone.riscv' 
+    assert dsBinary.exists(), f'Could not find Dhrystone binary {dsBinary}, have you built riscv-tests?'
+    loadBinaryIntoMemory(dut, dsBinary)
+    await preTestSetup(dut)
 
-#     trace = []
-#     if tracingMode == 'compare':
-#         # use ../ since we run from the sim_build directory
-#         with open(f'../trace-{dsBinary.name}.json', 'r', encoding='utf-8') as f:
-#             trace = json.load(f)
-#             pass
-#         pass
+    trace = []
+    if tracingMode == 'compare':
+        # use ../ since we run from the sim_build directory
+        with open(f'../trace-{dsBinary.name}.json', 'r', encoding='utf-8') as f:
+            trace = json.load(f)
+            pass
+        pass
 
-#     dut._log.info(f'Running Dhrystone benchmark (takes 255k cycles)... with tracingMode == {tracingMode}')
-#     for cycles in range(280_000):
-#         await RisingEdge(dut.clk)
+    dut._log.info(f'Running Dhrystone benchmark (takes 255k cycles)... with tracingMode == {tracingMode}')
+    for cycles in range(280_000):
+        await RisingEdge(dut.clk)
 
-#         handleTrace(dut, trace, cycles, tracingMode)
-#         if cycles > 0 and 0 == cycles % 10_000:
-#             dut._log.info(f'ran {int(cycles/1000)}k cycles...')
-#             pass
-#         if dut.halt.value == 1:
-#             # there are 22 output checks, each sets 1 bit
-#             expectedValue = (1<<22) - 1
-#             assert expectedValue == dut.datapath.rf.regs[5].value.integer
-#             latency_millis = (cycles / 15_000_000) * 1000
-#             dut._log.info(f'dhrystone passed after {cycles} cycles, {latency_millis} milliseconds with 15MHz clock')
+        handleTrace(dut, trace, cycles, tracingMode)
+        if cycles > 0 and 0 == cycles % 10_000:
+            dut._log.info(f'ran {int(cycles/1000)}k cycles...')
+            pass
+        if dut.halt.value == 1:
+            # there are 22 output checks, each sets 1 bit
+            expectedValue = (1<<22) - 1
+            assert expectedValue == dut.datapath.rf.regs[5].value.integer
+            latency_millis = (cycles / 15_000_000) * 1000
+            dut._log.info(f'dhrystone passed after {cycles} cycles, {latency_millis} milliseconds with 15MHz clock')
             
-#             if tracingMode == 'generate':
-#                 with open(f'trace-{dsBinary.name}.json', 'w', encoding='utf-8') as f:
-#                     json.dump(trace, f, indent=2)
-#                     pass
+            if tracingMode == 'generate':
+                with open(f'trace-{dsBinary.name}.json', 'w', encoding='utf-8') as f:
+                    json.dump(trace, f, indent=2)
+                    pass
             
-#             return
-#         pass
-#     raise SimTimeoutError()
+            return
+        pass
+    raise SimTimeoutError()
 
 @cocotb.test()
 async def testOneRiscvTest(dut):
