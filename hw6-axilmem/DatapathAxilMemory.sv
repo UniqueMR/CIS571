@@ -238,9 +238,39 @@ module MemoryAxiLite #(
         insn.RVALID <= 1'b0;
       end
       
-
       if(data.WVALID && data.AWVALID) begin
-        mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
+        case(data.WSTRB)
+          4'b0001:  begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][7:0] <= data.WDATA[7:0];
+          end
+
+          4'b0010:  begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][15:8] <= data.WDATA[15:8];
+          end
+
+          4'b0100:  begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][23:16] <= data.WDATA[23:16];
+          end
+
+          4'b1000:  begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][31:24] <= data.WDATA[31:24];
+          end
+
+          4'b0011:  begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][15:0] <= data.WDATA[15:0];
+          end
+
+          4'b1100:  begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][31:16] <= data.WDATA[31:16];
+          end
+
+          4'b1111:  begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
+          end
+          default:  begin
+          end
+        endcase
+
         data.BVALID <= 1'b1;
         data.BRESP <= ResponseOkay;
       end
@@ -802,8 +832,19 @@ module DatapathAxilMemory (
     end
   end
 
+  logic [31:0] last_alu_data_rs1;
+  logic [31:0] last_alu_data_rs2;
+
+  always_ff @(posedge clk)  begin
+    last_alu_data_rs1 <= alu_data_rs1;
+    last_alu_data_rs2 <= alu_data_rs2;
+  end
+
   always_comb begin
-    if(mx_bypass_rs1) begin
+    if(div_stall_curr)  begin
+      alu_data_rs1 = last_alu_data_rs1;
+    end
+    else if(mx_bypass_rs1) begin
       alu_data_rs1 = memory_state.data_rd;
     end
     else if(wx_bypass_rs1)  begin
@@ -818,7 +859,10 @@ module DatapathAxilMemory (
   end
 
   always_comb begin
-    if(mx_bypass_rs2) begin
+    if(div_stall_curr)  begin
+      alu_data_rs2 = last_alu_data_rs2;
+    end
+    else if(mx_bypass_rs2) begin
       alu_data_rs2 = memory_state.data_rd;
     end
     else if(wx_bypass_rs2)  begin
@@ -1355,22 +1399,22 @@ module DatapathAxilMemory (
           3'b000: begin
             case(memory_state.mem_addr_offset)
               2'b00: begin
-                m_st_we_to_dmem = 4'b0001;
+                dmem.WSTRB = 4'b0001;
                 m_data_to_dmem[7:0] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);
               end
 
               2'b01:  begin
-                m_st_we_to_dmem = 4'b0010;
+                dmem.WSTRB = 4'b0010;
                 m_data_to_dmem[15:8] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);
               end
 
               2'b10: begin
-                m_st_we_to_dmem = 4'b0100;
+                dmem.WSTRB = 4'b0100;
                 m_data_to_dmem[23:16] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);
               end
 
               2'b11:  begin
-                m_st_we_to_dmem = 4'b1000;
+                dmem.WSTRB = 4'b1000;
                 m_data_to_dmem[31:24] = (load_store_x_stall) ? load_store_x_stall_data[7:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[7:0] : writeback_state.data_rd[7:0]) : memory_state.data_to_dmem[7:0]);               
               end
             endcase
@@ -1378,14 +1422,14 @@ module DatapathAxilMemory (
 
           // sh
           3'b001: begin
-            case(writeback_state.mem_addr_offset)
+            case(memory_state.mem_addr_offset)
               2'b00:  begin
-                m_st_we_to_dmem = 4'b0011;
+                dmem.WSTRB = 4'b0011;
                 m_data_to_dmem[15:0] = (load_store_x_stall) ? load_store_x_stall_data[15:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0]);
               end
 
               2'b10: begin
-                m_st_we_to_dmem = 4'b1100;
+                dmem.WSTRB = 4'b1100;
                 m_data_to_dmem[31:16] = (load_store_x_stall) ? load_store_x_stall_data[15:0] : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg[15:0] : writeback_state.data_rd[15:0]) : memory_state.data_to_dmem[15:0]);
               end
 
@@ -1395,9 +1439,9 @@ module DatapathAxilMemory (
 
           // sw
           3'b010: begin
-            case(writeback_state.mem_addr_offset)
+            case(memory_state.mem_addr_offset)
               2'b00:  begin
-                m_st_we_to_dmem = 4'b1111;
+                dmem.WSTRB = 4'b1111;
                 m_data_to_dmem = (load_store_x_stall) ? load_store_x_stall_data : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd) : memory_state.data_to_dmem);
               end
 
@@ -1420,6 +1464,10 @@ module DatapathAxilMemory (
 
   logic [31:0] stored_data_reg [1:0];
   logic [31:0] stored_addr_reg [1:0];
+
+  // wire [31:0] store_load_same_data;
+  // assign store_load_same_data = (load_store_x_stall) ? load_store_x_stall_data : ((wm_bypass_data) ? ((writeback_state.insn_opcode == OpcodeLoad) ? m_data_to_reg : writeback_state.data_rd) : memory_state.data_to_dmem);
+
   always_ff @(posedge clk)  begin
     stored_data_reg[0] <= m_data_to_dmem;
     stored_data_reg[1] <= stored_data_reg[0];
@@ -1523,7 +1571,8 @@ module DatapathAxilMemory (
 
   logic store_load_same_dmem;
   always_ff @(posedge clk)  begin
-    store_load_same_dmem <= (writeback_state.insn_opcode == OpcodeStore && memory_state.insn_opcode == OpcodeLoad && stored_addr_reg[0] == memory_state.mem_addr_base);
+    // store_load_same_dmem <= (writeback_state.insn_opcode == OpcodeStore && memory_state.insn_opcode == OpcodeLoad && stored_addr_reg[0] == memory_state.mem_addr_base);
+    store_load_same_dmem <= 1'b0;
   end
 
   always_comb begin
@@ -1547,6 +1596,7 @@ module DatapathAxilMemory (
             case(writeback_state.mem_addr_offset)
               2'b00: m_data_to_reg = {{16{load_data_from_dmem[15]}}, {load_data_from_dmem[15:0]}};
               2'b10: m_data_to_reg = {{16{load_data_from_dmem[31]}}, {load_data_from_dmem[31:16]}};
+              // 2'b10: m_data_to_reg = {{16{load_data_from_dmem[15]}}, {load_data_from_dmem[15:0]}};
               default: w_illegal_insn = 1'b1;
             endcase
           end
